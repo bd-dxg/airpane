@@ -22,6 +22,7 @@ use airpane_core::stage::Mode;
 use airpane_core::window_sizes::{WindowSizeStore, WindowSizesFile};
 use airpane_platform_win::events::WindowEvent;
 use airpane_platform_win::foreground::foreground_window;
+use airpane_platform_win::monitor;
 use airpane_platform_win::window::is_desktop_window;
 use airpane_platform_win::{log_debug, log_info};
 use airpane_strip::window::{Strip, StripAction, StripItem};
@@ -40,6 +41,8 @@ pub struct App {
     tick: u32,
     /// 前台变成桌面（Win+D）时隐藏了预览区，回到普通窗口时需要恢复。
     desktop_hidden: bool,
+    /// 当前窗口盖住整屏（视频全屏、F11、游戏）时隐藏了预览区（D-052）。
+    fullscreen_hidden: bool,
     /// 新搬入窗口的观察期截止时间。应用启动时会自己改尺寸，这段时间内持续纠正。
     settle_until: Option<Instant>,
     snapshot_path: PathBuf,
@@ -57,6 +60,7 @@ impl App {
             last_items: Vec::new(),
             tick: 0,
             desktop_hidden: false,
+            fullscreen_hidden: false,
             settle_until: None,
             snapshot_path,
             sizes_path,
@@ -81,6 +85,7 @@ impl App {
         log_info!("进入 Stage 模式（预览区宽 {} 像素）", strip.width());
         self.refresh_registry();
         self.focus_window(foreground_window(), strip);
+        self.sync_fullscreen_visibility(strip);
         self.sync_strip(strip);
     }
 
@@ -95,6 +100,7 @@ impl App {
         self.registry = WindowRegistry::new();
         self.last_items.clear();
         self.desktop_hidden = false;
+        self.fullscreen_hidden = false;
         let _ = strip.sync(&[]);
         strip.set_visible(false);
     }
@@ -145,6 +151,8 @@ impl App {
                 }
                 self.refresh_registry();
                 self.focus_window(hwnd, strip);
+                // 全屏视频/游戏/F11 会把整屏盖住，此时预览区浮在上面反而遮挡画面。
+                self.sync_fullscreen_visibility(strip);
             }
             // DESTROY 事件在进程退出时不会投递（D-020），这里只是尽力而为，
             // 1Hz 的 reconcile 才是兜底。
@@ -183,6 +191,8 @@ impl App {
         if self.settle_until.is_none() {
             self.remember_active_size(strip.width());
         }
+        // 在同一个窗口里点全屏不会产生前台事件，靠 1Hz 校准补上（D-052）。
+        self.sync_fullscreen_visibility(strip);
         if let Some(active) = self.active {
             if !self.registry.contains(active) {
                 log_debug!("活跃窗口 {:#x} 已消失", active);
@@ -190,6 +200,32 @@ impl App {
             }
         }
         self.sync_strip(strip);
+    }
+
+    /// 当前窗口盖住整屏时隐藏预览区，回到普通窗口再恢复（D-052）。
+    ///
+    /// 用「可视边界盖住整个显示器」而不是 D-041 的「无标题栏 + 无最小化按钮」：
+    /// 浏览器 F11 会保留标题栏样式，严格规则会漏掉；而只要窗口真的盖住整屏，
+    /// 置顶的预览区就会挡在它上面。
+    ///
+    /// 桌面隐藏优先：Win+D 后不重复处理。
+    fn sync_fullscreen_visibility(&mut self, strip: &mut Strip) {
+        if self.desktop_hidden {
+            return;
+        }
+        let fullscreen = self
+            .active
+            .is_some_and(|hwnd| monitor::covers_primary_monitor(hwnd as isize));
+        if fullscreen == self.fullscreen_hidden {
+            return;
+        }
+        self.fullscreen_hidden = fullscreen;
+        strip.set_visible(!fullscreen);
+        if fullscreen {
+            log_info!("当前窗口盖住整屏，隐藏预览区");
+        } else {
+            log_info!("回到窗口模式，恢复预览区");
+        }
     }
 }
 
