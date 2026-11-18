@@ -6,7 +6,10 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// 新窗口搬入后的观察期。应用启动时的自我重排通常发生在 1–2 秒内。
+const SETTLE_WINDOW: Duration = Duration::from_secs(3);
 
 use airpane_core::registry::{TrackedWindow, WindowRegistry};
 use airpane_core::snapshot::{Rect, ShowState, SnapshotFile, WindowSnapshot};
@@ -36,6 +39,8 @@ pub struct App {
     tick: u32,
     /// 前台变成桌面（Win+D）时隐藏了预览区，回到普通窗口时需要恢复。
     desktop_hidden: bool,
+    /// 新搬入窗口的观察期截止时间。应用启动时会自己改尺寸，这段时间内持续纠正。
+    settle_until: Option<Instant>,
     snapshot_path: PathBuf,
     sizes_path: PathBuf,
 }
@@ -51,6 +56,7 @@ impl App {
             last_items: Vec::new(),
             tick: 0,
             desktop_hidden: false,
+            settle_until: None,
             snapshot_path,
             sizes_path,
         }
@@ -171,7 +177,11 @@ impl App {
             self.reconcile_tracked();
         }
         self.enforce_active_bounds(strip);
-        self.remember_active_size(strip.width());
+        self.enforce_settle(strip);
+        // 观察期内不记录尺寸：那时窗口的尺寸是应用自己初始化出来的，不是用户偏好。
+        if self.settle_until.is_none() {
+            self.remember_active_size(strip.width());
+        }
         if let Some(active) = self.active
             && !self.registry.contains(active)
         {
@@ -262,6 +272,8 @@ impl App {
                     target.top
                 );
                 self.active = Some(hwnd);
+                // 应用启动时往往会在之后 1–2 秒内自己重排尺寸，观察一会儿并及时纠正。
+                self.settle_until = Some(Instant::now() + SETTLE_WINDOW);
             }
             Err(err) => log_warn!("移动 {} 失败：{err}", info.process_name),
         }
@@ -385,6 +397,40 @@ impl App {
         }
         snapshot_store::clear(&self.snapshot_path);
         self.active = None;
+    }
+
+    /// 观察期内持续把活跃窗口拉回舞台区。
+    ///
+    /// 新程序启动时，应用自己的初始化代码常常在我们的 `SetWindowPos` 之后又把窗口
+    /// 改回默认尺寸，表现为「刚打开是小窗口，切走再切回才铺满」。观察期结束后不再
+    /// 干预，用户手动调尺寸仍然有效。
+    fn enforce_settle(&mut self, strip: &mut Strip) {
+        let Some(deadline) = self.settle_until else {
+            return;
+        };
+        if Instant::now() >= deadline {
+            self.settle_until = None;
+            return;
+        }
+        let Some(active) = self.active else {
+            self.settle_until = None;
+            return;
+        };
+        let Some(info) = inspect_window(active as isize) else {
+            return;
+        };
+        if show_state(info.hwnd) != ShowState::Normal {
+            return;
+        }
+        let target = self.target_rect(&info, strip.width(), false);
+        if info.rect == target {
+            return;
+        }
+        if move_window(active as isize, target).is_ok() {
+            log_debug!("{} 在观察期内被改小，已重新摆到舞台区", info.process_name);
+            self.last_items.clear();
+            self.sync_strip(strip);
+        }
     }
 
     /// 活跃窗口被最大化时重新摆回舞台区。

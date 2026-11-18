@@ -13,9 +13,10 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     IsZoomed, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+    WS_CAPTION, WS_MINIMIZEBOX,
 };
 
-use crate::window::{extended_frame_bounds, is_window};
+use crate::window::{extended_frame_bounds, has_window_style, is_window};
 
 /// 主显示器的可用区域（已扣除任务栏）。
 pub fn primary_work_area() -> Rect {
@@ -86,10 +87,21 @@ pub fn covers_primary_monitor(hwnd: isize) -> bool {
 
 /// M1 的最小全屏保护：命中时不得移动、不得缩放该窗口。
 ///
-/// 只针对「真全屏」：可视边界覆盖整屏且**未最大化**（游戏、全屏视频、演示）。
-/// 最大化窗口不再属于跳过范围——它们在 Stage 模式下应当摆到舞台区（D-037）。
+/// 判定“真全屏”（游戏、全屏视频、演示）：
+/// 1. 可视边界覆盖整屏；
+/// 2. 未处于最大化状态；
+/// 3. 没有任何“应用窗口”的痕迹（标题栏或最小化按钮）。
+///
+/// 第 3 条是为了放过 MMC（任务计划程序）这类用 `WS_POPUP` 自定义最大化的程序：
+/// 它们的 `IsZoomed` 为 false，但带 `WS_MINIMIZEBOX`，应当和普通最大化窗口一样搬进舞台区。
+/// M2 会用 `SHQueryUserNotificationState` 与进程名单把这条启发式换掉。
 pub fn is_exclusive_fullscreen(hwnd: isize) -> bool {
-    covers_primary_monitor(hwnd) && !is_maximized(hwnd)
+    if !covers_primary_monitor(hwnd) || is_maximized(hwnd) {
+        return false;
+    }
+    let looks_like_app_window = has_window_style(hwnd, WS_CAPTION.0 as i32)
+        || has_window_style(hwnd, WS_MINIMIZEBOX.0 as i32);
+    !looks_like_app_window
 }
 
 fn to_rect(rect: RECT) -> Rect {
