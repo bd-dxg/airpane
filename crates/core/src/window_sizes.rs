@@ -113,6 +113,19 @@ impl WindowSizeStore {
         self.session.remove(&hwnd);
     }
 
+    /// 删除某个窗口的尺寸记忆（会话内与持久化都删）。
+    ///
+    /// 用户把窗口最大化时调用：那说明他要的是满屏，旧的小尺寸记录不再代表偏好。
+    pub fn remove(&mut self, hwnd: i64, process_name: &str, class_name: &str) {
+        self.session.remove(&hwnd);
+        let before = self.entries.len();
+        self.entries
+            .retain(|entry| !same_window(entry, process_name, class_name));
+        if self.entries.len() != before {
+            self.dirty = true;
+        }
+    }
+
     /// 取出并清除「需要写盘」标记。
     pub fn take_dirty(&mut self) -> bool {
         std::mem::take(&mut self.dirty)
@@ -220,6 +233,18 @@ mod tests {
         let mut store = WindowSizeStore::from_file(restored);
         assert!(!store.take_dirty(), "刚加载不应需要写盘");
         assert_eq!(store.size_for(42, "a.exe", "A"), Some(size(700, 500)));
+    }
+
+    #[test]
+    fn remove_drops_session_and_persisted_entries() {
+        let mut store = WindowSizeStore::default();
+        store.record(1, "msedge.exe", "Chrome_WidgetWin_1", size(1280, 1440));
+        assert!(store.take_dirty());
+
+        store.remove(1, "msedge.exe", "Chrome_WidgetWin_1");
+        assert!(store.take_dirty(), "删除持久化条目应当需要写盘");
+        assert!(store.is_empty());
+        assert_eq!(store.size_for(1, "msedge.exe", "Chrome_WidgetWin_1"), None);
     }
 
     #[test]
