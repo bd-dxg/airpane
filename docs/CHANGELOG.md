@@ -47,6 +47,11 @@
 - 记录预览区半透明不可行的实验结论，排序到 M3 的渲染重写（D-043）
 - 最小单实例检测：已有预览区窗口时弹提示并退出，避免两个实例互抢窗口与快捷键（D-042）
 
+### 工程（M1）
+
+- 单个源码文件不超过 300 行：`strip::window`、`app`、`platform_win::window` 各自按职责拆成子模块，行为与公开接口不变
+- AGENTS.md 补充提交前流程：必须跑 `code-review-expert` 并修完审出的问题，再执行 `gencom` 生成提交信息
+
 ### 新增（M0 技术原型）
 
 - Cargo workspace 骨架：`airpane-core`、`airpane-platform-win`、`airpane-strip`、`airpane`
