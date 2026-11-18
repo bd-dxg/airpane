@@ -44,10 +44,8 @@ pub struct App {
     last_items: Vec<StripItem>,
     /// 1Hz 校准的计数，用于每 10 秒做一次全量枚举兜底。
     tick: u32,
-    /// 前台变成桌面（Win+D）时隐藏了预览区，回到普通窗口时需要恢复。
-    desktop_hidden: bool,
-    /// 当前窗口盖住整屏（视频全屏、F11、游戏）时隐藏了预览区（D-052）。
-    fullscreen_hidden: bool,
+    /// 预览区是否被隐藏（桌面在前台，或当前窗口盖住整屏）。
+    strip_hidden: bool,
     /// 新搬入窗口的观察期截止时间。应用启动时会自己改尺寸，这段时间内持续纠正。
     settle_until: Option<Instant>,
     snapshot_path: PathBuf,
@@ -74,8 +72,7 @@ impl App {
             moved: BTreeMap::new(),
             last_items: Vec::new(),
             tick: 0,
-            desktop_hidden: false,
-            fullscreen_hidden: false,
+            strip_hidden: false,
             settle_until: None,
             snapshot_path: paths.snapshot,
             sizes_path: paths.sizes,
@@ -101,7 +98,7 @@ impl App {
         log_info!("进入 Stage 模式（预览区宽 {} 像素）", strip.width());
         self.refresh_registry();
         self.focus_window(foreground_window(), strip);
-        self.sync_fullscreen_visibility(strip);
+        self.update_strip_visibility(strip);
         self.sync_strip(strip);
     }
 
@@ -115,8 +112,7 @@ impl App {
         self.restore_moved();
         self.registry = WindowRegistry::new();
         self.last_items.clear();
-        self.desktop_hidden = false;
-        self.fullscreen_hidden = false;
+        self.strip_hidden = false;
         let _ = strip.sync(&[]);
         strip.set_visible(false);
     }
@@ -152,24 +148,15 @@ impl App {
         }
         match event {
             WindowEvent::Foreground { hwnd } => {
-                // Win+D / 显示桌面：预览区会遮住桌面图标，暂时藏起来。
+                // Win+D / 显示桌面：桌面不需要搬窗口，只更新可见性。
                 if is_desktop_window(hwnd) {
-                    if !self.desktop_hidden {
-                        self.desktop_hidden = true;
-                        strip.set_visible(false);
-                        log_info!("桌面成为前台，隐藏预览区");
-                    }
+                    self.update_strip_visibility(strip);
                     return;
-                }
-                if self.desktop_hidden {
-                    self.desktop_hidden = false;
-                    strip.set_visible(true);
-                    log_info!("离开桌面，恢复预览区");
                 }
                 self.refresh_registry();
                 self.focus_window(hwnd, strip);
                 // 全屏视频/游戏/F11 会把整屏盖住，此时预览区浮在上面反而遮挡画面。
-                self.sync_fullscreen_visibility(strip);
+                self.update_strip_visibility(strip);
             }
             // DESTROY 事件在进程退出时不会投递（D-020），这里只是尽力而为，
             // 1Hz 的 reconcile 才是兜底。
@@ -209,7 +196,7 @@ impl App {
             self.remember_active_size(strip.width());
         }
         // 在同一个窗口里点全屏不会产生前台事件，靠 1Hz 校准补上（D-052）。
-        self.sync_fullscreen_visibility(strip);
+        self.update_strip_visibility(strip);
         if let Some(active) = self.active {
             if !self.registry.contains(active) {
                 log_debug!("活跃窗口 {:#x} 已消失", active);
@@ -219,29 +206,33 @@ impl App {
         self.sync_strip(strip);
     }
 
-    /// 当前窗口盖住整屏时隐藏预览区，回到普通窗口再恢复（D-052）。
+    /// 根据当前前台窗口决定预览区要不要隐藏（D-036、D-052）。
     ///
-    /// 用「可视边界盖住整个显示器」而不是 D-041 的「无标题栏 + 无最小化按钮」：
-    /// 浏览器 F11 会保留标题栏样式，严格规则会漏掉；而只要窗口真的盖住整屏，
-    /// 置顶的预览区就会挡在它上面。
+    /// 两种情况要藏：桌面成为前台（Win+D，否则遮住桌面图标）；当前窗口的可视边界
+    /// 盖住整个显示器（视频全屏、游戏、F11，否则置顶的预览区挡在画面上）。
     ///
-    /// 桌面隐藏优先：Win+D 后不重复处理。
-    fn sync_fullscreen_visibility(&mut self, strip: &mut Strip) {
-        if self.desktop_hidden {
+    /// 直接查前台窗口，不从事件参数或 `active` 推断：两者在桌面、全屏、UAC 等
+    /// 过渡时刻都可能对不上，而可见性是每帧都要正确的东西。
+    ///
+    /// 只在状态真正变化时调 `SetWindowVisible`，避免「先显示再隐藏」的闪一下。
+    fn update_strip_visibility(&mut self, strip: &mut Strip) {
+        let desktop = is_desktop_window(foreground_window());
+        let fullscreen = !desktop
+            && self
+                .active
+                .is_some_and(|hwnd| monitor::covers_primary_monitor(hwnd as isize));
+        let hidden = desktop || fullscreen;
+        if hidden == self.strip_hidden {
             return;
         }
-        let fullscreen = self
-            .active
-            .is_some_and(|hwnd| monitor::covers_primary_monitor(hwnd as isize));
-        if fullscreen == self.fullscreen_hidden {
-            return;
-        }
-        self.fullscreen_hidden = fullscreen;
-        strip.set_visible(!fullscreen);
-        if fullscreen {
-            log_info!("当前窗口盖住整屏，隐藏预览区");
+        self.strip_hidden = hidden;
+        strip.set_visible(!hidden);
+        if !hidden {
+            log_info!("恢复预览区");
+        } else if desktop {
+            log_info!("桌面成为前台，隐藏预览区");
         } else {
-            log_info!("回到窗口模式，恢复预览区");
+            log_info!("当前窗口盖住整屏，隐藏预览区");
         }
     }
 }
