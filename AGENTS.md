@@ -53,6 +53,7 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 | `crates/platform-win` | Win32 封装：枚举、WinEvent、前台切换、DPI、快照接口。`unsafe` 集中在这里 |
 | `crates/strip` | 预览区窗口：窄栏、DWM 缩略图、点击切换。`unsafe` 集中在这里；`window/` 下拆出布局、绘制、消息处理与状态 |
 | `crates/app` | 主程序：配置与日志、消息循环、Stage 控制器；`app/` 下按搬窗口、快照与尺寸、观察期、注册表拆分 |
+| `assets/` | 应用图标：`airpane.ico` 与 `airpane.rc`，由 `crates/app/build.rs` 用 `rc.exe` 编进 exe |
 | `prototypes/anim` | M0 的一次性动画原型，验证完废弃，M1 不继承 |
 | `docs/` | `PRD.md`（冻结的草案基线）、`DECISIONS.md`（冲突时以此为准）、`DEPENDENCIES.md`、`CHANGELOG.md`、M0 的两份报告 |
 

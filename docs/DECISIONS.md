@@ -362,3 +362,11 @@
 - **理由**：鼠标经过时整列上下滑动是「排序乱跳」感受的一部分，而放大本身对识别窗口没有帮助。高亮不改变任何几何，列表完全静止。
 - **影响**：`layout_entries` 去掉 `hovered` 参数与 `HOVER_NUM / HOVER_DEN`；`wnd_proc` 的 `WM_MOUSEMOVE` / `WM_MOUSELEAVE` 只调 `InvalidateRect`；`paint` 增加悬停配色。
 - **已知限制**：DWM 缩略图覆盖了项的大部分面积，高亮只能画在图标条上，视觉强度比不上 macOS 的整项高亮。
+
+## D-050 应用图标：多尺寸 ico + 自写 build.rs 调 rc.exe
+
+- **日期**：2026-11-19
+- **决策**：把用户设计的 `airpane.png` 转成 `assets/airpane.ico`（16/24/32/48/64/128 用 32 位 DIB，256 用 PNG 帧），连同 `assets/airpane.rc` 由 `crates/app/build.rs` 调 Windows SDK 自带的 `rc.exe` 编成 `.res` 再交给链接器（`cargo:rustc-link-arg`）。预览区窗口类的 `hIcon` 用同一个资源 id。小尺寸直接由原图缩放，不做简化版（用户确认）。
+- **理由**：不用 `embed-resource` / `winres`——它们会带进 20 多个构建期依赖（toml、winnow、cc、vswhom…），而这件事只需要一次 `rc.exe` 调用。`rc.exe` 随 Windows SDK 安装，MSVC 工具链的开发机与 CI 都会有。
+- **影响**：新增 `assets/{airpane.ico,airpane.rc}`、`crates/app/build.rs`；`windows` crate 无需新 feature（`LoadIconW` 已在 `Win32_UI_WindowsAndMessaging`）；`Cargo.lock` 没有变化。示例程序（如 `preview_strip`）没有这份资源，加载失败就退化为无窗口图标。
+- **已知限制**：图标整体偏白且大量半透明，缩到 16/24 px 后只剩一团淡色轮廓，任务栏与资源管理器里待建议另外出一张简化图；另外 `rc.exe` 路径按 `%ProgramFiles(x86)%\Windows Kits\10\bin\*\x64` 取最高版本，自定义安装位置会找不到（会直接报错，不会静默生成无图标的 exe）。

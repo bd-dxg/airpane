@@ -11,6 +11,8 @@
 | `windows` | 0.62.2 | MIT OR Apache-2.0 | Win32 / DWM / DXGI / DirectComposition 绑定 | T0.1 || `serde` | 1.0.229（含 `serde_derive`） | MIT OR Apache-2.0 | 窗口快照与配置的序列化 | T0.1 |
 | `serde_json` | 1.0.154 | MIT OR Apache-2.0 | 窗口快照与配置的 JSON 读写：`airpane-core` 的 dev-dependency，`airpane-platform-win` 的直接依赖（T1.7 起） | T0.1 |
 
+构建工具（不算 crate 依赖）：`crates/app/build.rs` 调用 Windows SDK 自带的 `rc.exe`，把 `assets/airpane.rc` 里的应用图标编进 exe（D-050）。要求开发机与 CI 都装了 Windows SDK——MSVC 工具链默认会带。
+
 ## 传递依赖
 
 由 `cargo metadata` 导出，全部为 MIT / Apache-2.0 类许可，与 GPL-3.0 兼容。

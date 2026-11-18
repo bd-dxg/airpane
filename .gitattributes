@@ -9,4 +9,6 @@ LICENSE text eol=lf
 # Rust 源码与清单
 *.rs text eol=lf
 *.toml text eol=lf
+*.rc text eol=lf
+*.ico binary
 Cargo.lock text eol=lf
