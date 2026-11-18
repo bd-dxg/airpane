@@ -4,8 +4,10 @@
 //! 每处 `unsafe` 块前必须写明安全前提。
 
 pub mod config_io;
+pub mod dialog;
 pub mod events;
 pub mod foreground;
+pub mod hotkey;
 pub mod json_io;
 pub mod logging;
 pub mod message_loop;

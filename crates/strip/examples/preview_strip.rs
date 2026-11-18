@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 
 use airpane_platform_win::foreground::foreground_window;
 use airpane_platform_win::window::enum_top_level_windows;
-use airpane_strip::window::{Strip, StripItem, enable_per_monitor_v2};
+use airpane_strip::window::{
+    DEFAULT_WIDTH_DIP, Strip, StripAction, StripItem, enable_per_monitor_v2,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
 };
@@ -37,7 +39,8 @@ fn main() -> ExitCode {
 
     enable_per_monitor_v2();
 
-    let mut strip = match Strip::create(airpane_strip::window::DEFAULT_WIDTH_DIP) {
+    let (action_tx, actions) = std::sync::mpsc::channel();
+    let mut strip = match Strip::create(DEFAULT_WIDTH_DIP, action_tx) {
         Ok(strip) => strip,
         Err(err) => {
             eprintln!("创建预览区失败: {err}");
@@ -65,6 +68,13 @@ fn main() -> ExitCode {
             let items = collect_items();
             if let Err(err) = strip.sync(&items) {
                 eprintln!("同步缩略图失败: {err}");
+            }
+        }
+
+        while let Ok(action) = actions.try_recv() {
+            match action {
+                StripAction::ToggleMode => println!("示例不处理模式切换"),
+                StripAction::OpenSettings => println!("示例没有设置面板"),
             }
         }
 

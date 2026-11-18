@@ -13,12 +13,14 @@ use airpane_core::snapshot::{Rect, ShowState, SnapshotFile, WindowSnapshot};
 use airpane_core::stage::{self, Mode};
 use airpane_core::window_sizes::{Size, WindowSizeStore, WindowSizesFile};
 use airpane_platform_win::events::WindowEvent;
-use airpane_platform_win::foreground::foreground_window;
+use airpane_platform_win::foreground::{self, foreground_window};
 use airpane_platform_win::monitor;
 use airpane_platform_win::placement::move_window;
-use airpane_platform_win::window::{WindowInfo, enum_managed_windows, inspect_window, is_window};
+use airpane_platform_win::window::{
+    WindowInfo, enum_managed_windows, inspect_window, is_window, show_state,
+};
 use airpane_platform_win::{log_debug, log_info, log_warn, size_store, snapshot_store};
-use airpane_strip::window::{Strip, StripItem};
+use airpane_strip::window::{Strip, StripAction, StripItem};
 
 /// Stage 模式的运行时状态。
 pub struct App {
@@ -45,20 +47,68 @@ impl App {
         }
     }
 
-    /// 进入 Stage 模式：刷新窗口列表，并把当前前台窗口搬进舞台区。
+    /// 当前模式的显示名，用于启动日志与控制台输出。
+    pub fn mode_name(&self) -> &'static str {
+        match self.mode {
+            Mode::Stage => "Stage 模式（预览区 + 舞台区）",
+            Mode::Normal => "普通桌面模式",
+        }
+    }
+
+    /// 进入 Stage 模式：显示预览区，并把当前前台窗口搬进舞台区。
     pub fn enter_stage(&mut self, strip: &mut Strip) {
         if self.mode == Mode::Stage {
             return;
         }
         self.mode = Mode::Stage;
+        strip.set_visible(true);
         log_info!("进入 Stage 模式（预览区宽 {} 像素）", strip.width());
         self.refresh_registry();
         self.focus_window(foreground_window(), strip);
         self.sync_strip(strip);
     }
 
+    /// 切回普通桌面：还原所有被移动过的窗口，隐藏预览区。
+    pub fn leave_stage(&mut self, strip: &mut Strip) {
+        if self.mode == Mode::Normal {
+            return;
+        }
+        self.mode = Mode::Normal;
+        log_info!("切回普通桌面模式");
+        self.restore_moved();
+        self.registry = WindowRegistry::new();
+        let _ = strip.sync(&[]);
+        strip.set_visible(false);
+    }
+
+    /// 在两种模式之间切换。
+    pub fn toggle_mode(&mut self, strip: &mut Strip) {
+        match self.mode {
+            Mode::Stage => self.leave_stage(strip),
+            Mode::Normal => self.enter_stage(strip),
+        }
+    }
+
+    /// 处理预览区工具区发出的动作。
+    pub fn on_action(&mut self, action: StripAction, strip: &mut Strip) {
+        match action {
+            StripAction::ToggleMode => self.toggle_mode(strip),
+            StripAction::OpenSettings => {
+                log_info!("设置入口被点击（M1 无设置面板，M3 提供）");
+                airpane_platform_win::dialog::info(
+                    "AirPane",
+                    "M1 还没有设置面板。\n\n配置在 %APPDATA%\\AirPane\\config.json，改完重启程序生效。模式切换默认是 Ctrl+Alt+S。",
+                );
+            }
+        }
+    }
+
     /// 处理一个窗口事件。
     pub fn on_event(&mut self, event: WindowEvent, strip: &mut Strip) {
+        // 普通桌面模式下不跟踪窗口，也不搬东西。
+        if self.mode != Mode::Stage {
+            return;
+        }
         match event {
             WindowEvent::Foreground { hwnd } => {
                 self.refresh_registry();
@@ -83,6 +133,9 @@ impl App {
 
     /// 1Hz 校准：重新枚举、记录活跃窗口尺寸、修正预览区。
     pub fn reconcile(&mut self, strip: &mut Strip) {
+        if self.mode != Mode::Stage {
+            return;
+        }
         self.refresh_registry();
         self.remember_active_size(strip.width());
         if let Some(active) = self.active
@@ -109,6 +162,25 @@ impl App {
         }
         let hwnd = info.hwnd as i64;
         self.registry.upsert(tracked(&info), true);
+
+        // 最小化窗口不直接搬：它的位置是 -32000 一类的占位值，且异步还原会让后续
+        // 读到的矩形还是旧值。先同步还原，再按还原后的真实矩形走正常流程。
+        let info = if show_state(info.hwnd) == ShowState::Minimized {
+            if !foreground::restore(info.hwnd) {
+                log_warn!("还原最小化窗口失败：{}", info.process_name);
+                self.sync_strip(strip);
+                return;
+            }
+            match inspect_window(info.hwnd) {
+                Some(info) => info,
+                None => {
+                    self.sync_strip(strip);
+                    return;
+                }
+            }
+        } else {
+            info
+        };
 
         if self.active == Some(hwnd) {
             // 同一窗口重新获得焦点：只顺手记录尺寸，不重复搬动。
@@ -189,6 +261,10 @@ impl App {
     }
 
     fn remember_size(&mut self, info: &WindowInfo, strip_width: i32) {
+        // 最小化与最大化窗口的矩形不是用户摆出来的，记下只会污染舞台区尺寸。
+        if show_state(info.hwnd) != ShowState::Normal {
+            return;
+        }
         if info.rect.width() <= 0 || info.rect.height() <= 0 {
             return;
         }
