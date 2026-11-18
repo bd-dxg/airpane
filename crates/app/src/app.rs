@@ -223,7 +223,10 @@ impl App {
 
         if self.active == Some(hwnd) {
             // 同一窗口重新获得焦点：只顺手记录尺寸，不重复搬动。
-            self.remember_size(&info, strip.width());
+            // 窗口刚被从最大化/最小化还原时不记录，否则会把它的还原尺寸当成偏好。
+            if original_state == ShowState::Normal {
+                self.remember_size(&info, strip.width());
+            }
             self.sync_strip(strip);
             return;
         }
@@ -240,7 +243,14 @@ impl App {
         }
 
         self.ensure_snapshot(&info, original_state);
-        let target = self.target_rect(&info, strip.width());
+        let force_stage = original_state == ShowState::Maximized;
+        if force_stage {
+            // 用户明确要求最大化，旧的小尺寸记忆不再代表偏好。
+            self.sizes
+                .remove(hwnd, &info.process_name, &info.class_name);
+            self.flush_sizes();
+        }
+        let target = self.target_rect(&info, strip.width(), force_stage);
         match move_window(info.hwnd, target) {
             Ok(()) => {
                 log_info!(
@@ -259,9 +269,15 @@ impl App {
     }
 
     /// 计算窗口在舞台区里的目标矩形。
-    fn target_rect(&self, info: &WindowInfo, strip_width: i32) -> Rect {
+    ///
+    /// `force_stage` 为真时忽略尺寸记忆，直接占满舞台区：用户明确点了最大化，
+    /// 旧的小尺寸记忆不该把它拉回去。
+    fn target_rect(&self, info: &WindowInfo, strip_width: i32, force_stage: bool) -> Rect {
         let work_area = monitor::primary_work_area();
         let stage = stage::stage_rect(work_area, strip_width);
+        if force_stage {
+            return stage;
+        }
         match self
             .sizes
             .size_for(info.hwnd as i64, &info.process_name, &info.class_name)
@@ -322,11 +338,17 @@ impl App {
                 height: info.rect.height(),
             },
         );
-        if self.sizes.take_dirty() {
-            let file = self.sizes.to_file();
-            if let Err(err) = size_store::write(&self.sizes_path, &file) {
-                log_warn!("写尺寸记忆失败：{err}");
-            }
+        self.flush_sizes();
+    }
+
+    /// 把尺寸记忆写盘（只在有变化时）。
+    fn flush_sizes(&mut self) {
+        if !self.sizes.take_dirty() {
+            return;
+        }
+        let file = self.sizes.to_file();
+        if let Err(err) = size_store::write(&self.sizes_path, &file) {
+            log_warn!("写尺寸记忆失败：{err}");
         }
     }
 
@@ -382,9 +404,12 @@ impl App {
         let Some(info) = inspect_window(active as isize) else {
             return;
         };
-        let target = self.target_rect(&info, strip.width());
+        let target = self.target_rect(&info, strip.width(), true);
         if move_window(active as isize, target).is_ok() {
-            log_debug!("{} 被最大化，已重新摆回舞台区", info.process_name);
+            self.sizes
+                .remove(active, &info.process_name, &info.class_name);
+            self.flush_sizes();
+            log_debug!("{} 被最大化，已摆回舞台区满屏", info.process_name);
             self.last_items.clear();
             self.sync_strip(strip);
         }
