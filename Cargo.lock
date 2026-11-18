@@ -7,6 +7,7 @@ name = "airpane"
 version = "0.0.0"
 dependencies = [
  "airpane-core",
+ "airpane-platform-win",
 ]
 
 [[package]]
@@ -31,6 +32,7 @@ name = "airpane-platform-win"
 version = "0.0.0"
 dependencies = [
  "airpane-core",
+ "serde_json",
  "windows",
 ]
 

@@ -4,7 +4,14 @@
 
 ## [Unreleased]
 
-### 新增
+### 新增（M1 自用版）
+
+- 配置文件 `%APPDATA%\AirPane\config.json`：预览区宽度、模式切换快捷键、启动模式、日志级别；缺失时自动重建，损坏时保留为 `config.json.broken`
+- 预览区宽度生效值计算：120–360 DIP 钳制，再按可用宽度 25% 收紧上限（D-012）
+- 自写文件日志：级别过滤、1MB × 3 份滚动、本地时间戳，写入 `%APPDATA%\AirPane\logs\airpane.log`（D-027）
+- 主程序启动接入配置与日志，打印生效的路径与配置项
+
+### 新增（M0 技术原型）
 
 - Cargo workspace 骨架：`airpane-core`、`airpane-platform-win`、`airpane-strip`、`airpane`
 - 窗口快照数据结构（`Rect`、`ShowState`、`WindowSnapshot`、`SnapshotFile`）与 JSON 往返测试

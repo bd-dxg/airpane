@@ -159,3 +159,17 @@
 - **决策**：除不可见、DWM cloak、`WS_EX_TOOLWINDOW`、系统壳窗口外，窗口还必须是顶层窗口（`GetAncestor(hwnd, GA_ROOT) == hwnd`），且无 owner（有 owner 时只有带 `WS_EX_APPWINDOW` 才保留）。
 - **理由**：记事本（Win11 版本）会创建大量名为 `Non Client Input Sink Window`、空标题的子窗口与附属窗口，并在创建时临时可见。缺少这两条规则时，一次 12 轮开关测试会在预览区模型里堆积 70+ 个幽灵窗口。
 - **影响**：`airpane-core::window` 的 `WindowFacts` 增加 `top_level`、`owned`、`app_window`；新增 `RejectReason::NotTopLevel` 与 `RejectReason::OwnedPopup`。
+
+## D-027 日志自写，不引入 tracing
+
+- **日期**：2026-11-19
+- **决策**：M1 的日志由 `airpane-platform-win::logging` 自实现：级别过滤、单文件 1MB、保留 `airpane.1.log` 到 `airpane.3.log` 三份历史、本地时间戳。不引入 `tracing` + `tracing-subscriber` + `tracing-appender`。
+- **理由**：PRD 5.1 只是「建议」`tracing`。M1 需要的只有「把崩溃前最后几步留下来」，自写模块约 150 行、零新依赖、不改 CI 编译时间；`tracing` 的结构化字段与过滤能力在 M1 没有使用场景。M4 做日志导出时若确实需要结构化查询，再评估替换。
+- **影响**：`docs/DEPENDENCIES.md` 不变；日志只写 hwnd、pid、进程名、错误码与状态迁移，不写窗口标题、窗口内容与用户输入（PRD 11.3 第 5 条）。
+
+## D-029 状态文件按生命周期分三份
+
+- **日期**：2026-11-19
+- **决策**：`%APPDATA%\AirPane\` 下分四个文件：用户设置 `config.json`、崩溃恢复 `snapshot.json`、尺寸记忆 `window-sizes.json`、日志 `logs\airpane.log`。`APPDATA` 缺失时回退到可执行文件同级目录，保证便携运行也能留下文件。
+- **理由**：三类数据生命周期不同——配置由用户手改，快照每次进入 Stage 都要重写，尺寸记忆由程序自动学习。混在一个文件里会让「每次移动窗口都重写用户配置」这种荒谬的写入模式出现，也让损坏时无法只重置其中一类。快照损坏时不该丢掉用户设置，反之亦然。
+- **影响**：`airpane-platform-win::paths` 是唯一拼路径的地方；写快照不得触碰 `config.json`。

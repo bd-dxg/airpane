@@ -8,9 +8,8 @@
 
 | 依赖 | 版本 | 许可证 | 用途 | 引入任务 |
 | --- | --- | --- | --- | --- |
-| `windows` | 0.62.2 | MIT OR Apache-2.0 | Win32 / DWM / DXGI / DirectComposition 绑定 | T0.1 |
-| `serde` | 1.0.229（含 `serde_derive`） | MIT OR Apache-2.0 | 窗口快照与配置的序列化 | T0.1 |
-| `serde_json` | 1.0.154 | MIT OR Apache-2.0 | 快照 JSON 往返测试（`airpane-core` 的 dev-dependency） | T0.1 |
+| `windows` | 0.62.2 | MIT OR Apache-2.0 | Win32 / DWM / DXGI / DirectComposition 绑定 | T0.1 || `serde` | 1.0.229（含 `serde_derive`） | MIT OR Apache-2.0 | 窗口快照与配置的序列化 | T0.1 |
+| `serde_json` | 1.0.154 | MIT OR Apache-2.0 | 窗口快照与配置的 JSON 读写：`airpane-core` 的 dev-dependency，`airpane-platform-win` 的直接依赖（T1.7 起） | T0.1 |
 
 ## 传递依赖
 
