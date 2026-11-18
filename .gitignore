@@ -1,0 +1,18 @@
+# 本地计划文件（不入库，见 docs/DECISIONS.md）
+/task_plan.md
+/findings.md
+/progress.md
+/.planning/
+/.plan-attestation
+/.mode
+
+# Rust
+/target/
+**/*.rs.bk
+
+# 编辑器与系统
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
