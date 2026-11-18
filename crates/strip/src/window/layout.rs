@@ -23,23 +23,16 @@ pub(super) const TOOLBAR_HEIGHT_DIP: i32 = 40;
 pub(super) const PADDING_DIP: i32 = 8;
 /// 相邻两项之间的间距。
 pub(super) const GAP_DIP: i32 = 6;
-/// 每项底部信息条的高度。
-const INFO_BAR_DIP: i32 = 20;
-/// 信息条里应用图标的边长。
-pub(super) const ICON_DIP: i32 = 16;
-/// 图标距信息条左边缘的距离。
-pub(super) const ICON_INSET_DIP: i32 = 2;
-/// 图标与标题之间的间距。
-pub(super) const ICON_GAP_DIP: i32 = 6;
-/// 标题距信息条右边缘的距离。
-pub(super) const TITLE_INSET_DIP: i32 = 4;
+/// 缩略图下方图标条的高度（D-048）：不显示标题，只留一个大图标。
+pub(super) const ICON_BAND_DIP: i32 = 40;
+/// 图标条里应用图标的边长。32 DIP 刚好是 `ICON_BIG` / 大文件图标的原始尺寸。
+pub(super) const ICON_DIP: i32 = 32;
+/// 图标距图标条左边缘的距离，与缩略图左边缘对齐。
+pub(super) const ICON_INSET_DIP: i32 = 8;
 /// 缩略图区的最小高度。
 const MIN_ITEM_DIP: i32 = 56;
-/// 缩略图区的最大高度，悬停放大也不超过它。
+/// 缩略图区的最大高度。
 const MAX_ITEM_DIP: i32 = 160;
-/// 悬停时缩略图区按 6/5 放大（+20%），已达上限的不再放大（D-045）。
-const HOVER_NUM: i32 = 6;
-const HOVER_DEN: i32 = 5;
 /// 源窗口尺寸不可用时使用的宽高比（16:9 的倒数）。
 const FALLBACK_ASPECT: f64 = 9.0 / 16.0;
 
@@ -100,7 +93,6 @@ pub(super) unsafe fn apply_layout(hwnd: HWND, state: *mut StripState) {
             width,
             available,
             &mut (*state).scroll,
-            (*state).hovered,
             &mut (*state).entries,
         );
         apply_thumbnails(&(*state).entries);
@@ -108,22 +100,14 @@ pub(super) unsafe fn apply_layout(hwnd: HWND, state: *mut StripState) {
     }
 }
 
-/// 按顺序纵向排列缩略图，每项是「缩略图 + 信息条」，高度按源窗口宽高比计算。
+/// 按顺序纵向排列缩略图，每项是「缩略图 + 图标条」，高度按源窗口宽高比计算。
 ///
 /// `scroll` 会被钳制在 `0..=(内容总高 - 可用高)` 内。超出工具区的项仍然会写进
-/// `rect` 与 `bar`，但会被窗口客户区裁掉。悬停项按 `HOVER_NUM / HOVER_DEN` 放大，
-/// 下面的项顺移。
-fn layout_entries(
-    dpi: u32,
-    width: i32,
-    available: i32,
-    scroll: &mut i32,
-    hovered: Option<isize>,
-    entries: &mut [Entry],
-) {
+/// `rect` 与 `bar`，但会被窗口客户区裁掉。悬停不改变尺寸，只改绘制（D-049）。
+fn layout_entries(dpi: u32, width: i32, available: i32, scroll: &mut i32, entries: &mut [Entry]) {
     let padding = scaled(PADDING_DIP, dpi);
     let gap = scaled(GAP_DIP, dpi);
-    let bar_height = scaled(INFO_BAR_DIP, dpi);
+    let bar_height = scaled(ICON_BAND_DIP, dpi);
     let inner = (width - padding * 2).max(1);
     let min_height = scaled(MIN_ITEM_DIP, dpi);
     let max_height = scaled(MAX_ITEM_DIP, dpi);
@@ -136,10 +120,7 @@ fn layout_entries(
         } else {
             FALLBACK_ASPECT
         };
-        let mut height = ((inner as f64 * aspect) as i32).clamp(min_height, max_height);
-        if hovered == Some(entry.window) {
-            height = (height * HOVER_NUM / HOVER_DEN).min(max_height);
-        }
+        let height = ((inner as f64 * aspect) as i32).clamp(min_height, max_height);
         heights.push(height + bar_height);
         total += height + bar_height + gap;
     }

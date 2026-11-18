@@ -7,7 +7,7 @@
 use core::ffi::c_void;
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGetFileInfoW};
+use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyIcon, GCLP_HICON, GetClassLongPtrW, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2,
     SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_GETICON,
@@ -87,7 +87,8 @@ fn class_icon(hwnd: isize) -> Option<AppIcon> {
     })
 }
 
-/// 第三级：按 exe 路径取文件图标，覆盖前两级都没设图标的窗口。
+/// 第三级：按 exe 路径取文件图标（大图标，32 DIP 下不会糊），覆盖前两级都没设图标的
+/// 窗口。
 fn file_icon(pid: u32) -> Option<AppIcon> {
     let path = process_path(pid)?;
     let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
@@ -100,7 +101,7 @@ fn file_icon(pid: u32) -> Option<AppIcon> {
             Default::default(),
             Some(&mut info),
             size_of::<SHFILEINFOW>() as u32,
-            SHGFI_ICON | SHGFI_SMALLICON,
+            SHGFI_ICON | SHGFI_LARGEICON,
         )
     };
     (ok != 0 && !info.hIcon.0.is_null()).then_some(AppIcon {

@@ -1,7 +1,8 @@
 //! 窗口模型：维护被管理窗口的集合与最近使用顺序（MRU）。
 //!
-//! 索引 0 是最近使用的窗口，对应预览区最上面的一项。本模块不依赖 Win32，
-//! 事件与枚举结果由上层填进来，因此顺序逻辑可以单元测试。
+//! 索引 0 是最近使用的窗口。本模块不依赖 Win32，事件与枚举结果由上层填进来，
+//! 因此顺序逻辑可以单元测试。预览区不使用这个顺序，改用 [`display_key`] 的固定排序
+//! （D-047）。
 
 /// 注册表中的一个被管理窗口。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +88,18 @@ impl WindowRegistry {
     }
 }
 
+/// 预览区列表的固定排序键：进程名 → 类名 → 句柄，前两项忽略大小写。
+///
+/// 刻意不比较标题：浏览器换标签页、编辑器换文件都会改标题，按标题排会让列表跟着
+/// 乱跳（D-047）。同一应用的同类窗口按句柄（即创建顺序）排，位置始终固定。
+pub fn display_key(window: &TrackedWindow) -> (String, String, i64) {
+    (
+        window.process_name.to_lowercase(),
+        window.class_name.to_lowercase(),
+        window.hwnd,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +164,43 @@ mod tests {
         assert!(registry.is_empty());
         assert_eq!(registry.remove(1), None);
         assert!(!registry.contains(1));
+    }
+
+    fn ordered(mut windows: Vec<TrackedWindow>) -> Vec<i64> {
+        windows.sort_by_cached_key(display_key);
+        windows.iter().map(|w| w.hwnd).collect()
+    }
+
+    #[test]
+    fn display_key_sorts_by_process_name_ignoring_case() {
+        let mut wechat = window(1, "chat");
+        wechat.process_name = "Weixin.exe".to_string();
+        let mut edge = window(2, "page");
+        edge.process_name = "msedge.exe".to_string();
+        let mut code = window(3, "main.rs");
+        code.process_name = "Code.exe".to_string();
+
+        assert_eq!(ordered(vec![wechat, edge, code]), vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn display_key_keeps_same_app_windows_in_creation_order() {
+        let mut first = window(30, "tab b");
+        first.class_name = "Chrome_WidgetWin_1".to_string();
+        let mut second = window(12, "tab a");
+        second.class_name = "Chrome_WidgetWin_1".to_string();
+
+        // 标题变化不影响位置，句柄小的（先创建的）在前。
+        assert_eq!(ordered(vec![first, second]), vec![12, 30]);
+    }
+
+    #[test]
+    fn display_key_differs_by_class_name() {
+        let mut main = window(5, "main");
+        main.class_name = "MainWindow".to_string();
+        let mut dialog = window(6, "dlg");
+        dialog.class_name = "AuxWindow".to_string();
+
+        assert_eq!(ordered(vec![main, dialog]), vec![6, 5]);
     }
 }

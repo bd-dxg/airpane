@@ -31,17 +31,15 @@ pub(super) struct Entry {
     pub(super) window: isize,
     pub(super) pid: u32,
     pub(super) class_name: String,
-    /// 展示用的短标题（D-044）。
-    pub(super) title: String,
     /// 应用图标句柄，生命周期由 `StripState::icons` 持有。
     pub(super) icon: Option<isize>,
     /// DWM 缩略图句柄（`HTHUMBNAIL`，在绑定里表示为 `isize`）。
     pub(super) thumb: isize,
     /// 最近一次已知的源窗口矩形，用于宽高比。
     pub(super) source: Rect,
-    /// 缩略图区域（不含信息条）。
+    /// 缩略图区域（不含图标条）。
     pub(super) rect: RECT,
-    /// 底部信息条：左侧图标，右侧标题。
+    /// 缩略图下方的图标条（D-048）。
     pub(super) bar: RECT,
 }
 

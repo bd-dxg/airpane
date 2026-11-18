@@ -20,15 +20,24 @@ const REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 
 fn collect_items() -> Vec<StripItem> {
     let foreground = foreground_window();
-    enum_top_level_windows()
+    let mut windows: Vec<_> = enum_top_level_windows()
         .into_iter()
         .filter(|info| info.is_managed() && info.hwnd != foreground)
+        .collect();
+    // 与主程序一致：按进程名 + 类名 + 句柄固定排序（D-047）。
+    windows.sort_by_cached_key(|info| {
+        (
+            info.process_name.to_lowercase(),
+            info.class_name.to_lowercase(),
+            info.hwnd,
+        )
+    });
+    windows
+        .into_iter()
         .map(|info| StripItem {
             window: info.hwnd,
             pid: info.pid,
             class_name: info.class_name,
-            process_name: info.process_name,
-            title: info.title,
             rect: info.rect,
         })
         .collect()

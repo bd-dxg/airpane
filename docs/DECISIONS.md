@@ -338,3 +338,27 @@
 - **理由**：只靠 `WM_GETICON` 会漏掉一批不设窗口图标的程序（终端、部分 Qt/Electron 应用），而只看 exe 图标又会把「同一进程不同类用不同图标」的场景抹平。缓存按类名区分、按 pid 分组，兼顾两者；`AppIcon` 记住所有权是因为销毁别人的图标句柄会破坏系统图标缓存。
 - **影响**：新增 `platform-win::icon`；`platform-win::window` 抽出 `process_path`（原 `query_process_name` 内部逻辑）。`Cargo.toml` 的 `windows` feature 增加 `Win32_UI_Shell` 与 `Win32_Storage_FileSystem`——`SHGetFileInfoW` 同时被这两个 feature 门控，只开前者编不过。
 - **已知限制**：`WM_GETICON` 用 `SendMessageTimeoutW` + `SMTO_ABORTIFHUNG`（每次查询 100ms 超时）发送，无响应的应用最多少见地拖慢一次同步；图标加载发生在同步路径上，不做后台线程（一次会话里每个应用只付一次）。`SHGFI_SMALLICON` 取的是系统小图标，高 DPI 下靠 `DrawIconEx` 放大，150% 以上会略糊（DPI 验收缺口，M4 补齐）。
+
+## D-047 预览区改用固定顺序，不再按最近使用排序
+
+- **日期**：2026-11-19
+- **决策**：预览区列表按 `(进程名, 类名, 句柄)` 升序固定排列，前两项忽略大小写，活跃窗口不显示。排序逻辑放在 `core::registry::display_key`（纯函数带单测），`app::sync_strip` 排序后再同步。刻意不比较标题。
+- **理由**：MRU 让刚失去焦点的窗口插到最上面，连着点两个应用时第 1、2 项反复互换，用户报「排序乱跳」。查日志确认这是设计行为而非 bug（每次点击只移动一个窗口）。固定顺序让同一个窗口永远待在同一位置，点开一个只让它消失；不比较标题是因为浏览器换标签页、编辑器换文件都会改标题，按标题排会把「乱跳」带回来。
+- **影响**：新增 `core::registry::display_key`；`app::sync_strip` 改为先排序再建列表；`preview_strip` 示例同步排序。注册表内部仍保留 MRU（`WindowRegistry`），仅供校准与调试使用。
+- **已知限制**：同一应用同类名的多个窗口按句柄（创建顺序）排，旧窗口销毁后新窗口会排到同类末尾。
+
+## D-048 预览区不显示标题，改成 40 DIP 的大图标条
+
+- **日期**：2026-11-19
+- **决策**：每项布局从「缩略图 + 20 DIP 信息条（16 DIP 图标 + 标题）」改成「缩略图 + 40 DIP 图标条（32 DIP 应用图标，左对齐缩略图左边缘）」。不显示标题，`core::title::short_title` 与 `StripItem` 的 `title` / `process_name` 字段随之删除。exe 图标兜底从 `SHGFI_SMALLICON` 换成 `SHGFI_LARGEICON`。
+- **理由**：用户对照 macOS 台前调度截图反馈「图标太小、标题太小」。macOS 左栅没有标题，只有大图标；32 DIP 正好是 `ICON_BIG` 与大文件图标的原始尺寸，不需要缩放。
+- **影响**：D-044（标题规则）不再有展示位，`crates/core/src/title.rs` 删除；D-045 的 20 DIP 信息条参数作废，换成 `ICON_BAND_DIP = 40`、`ICON_DIP = 32`、`ICON_INSET_DIP = 8`；`paint` 只画图标。
+- **已知限制**：DWM 缩略图由系统合成在窗口内容之上，图标不能像 macOS 那样压在缩略图角上，只能放在缩略图下方的条里；圆角与阴影同理由 M3 的 DirectComposition 解决。只有图标时，两个同类窗口（例如两个终端）无法从图标区分。
+
+## D-049 悬停改成高亮，取消放大与顺移
+
+- **日期**：2026-11-19
+- **决策**：悬停项的图标条背景从 `0x2B2B2B` 提到 `0x383838`，并在图标条上沿画 3 DIP 的浅蓝强调条（`RGB(80,160,255)`）。取消 D-045 的「悬停缩略图 +20% 放大、下方项顺移」，布局不再依赖悬停状态；悬停变化只重绘，不重排。
+- **理由**：鼠标经过时整列上下滑动是「排序乱跳」感受的一部分，而放大本身对识别窗口没有帮助。高亮不改变任何几何，列表完全静止。
+- **影响**：`layout_entries` 去掉 `hovered` 参数与 `HOVER_NUM / HOVER_DEN`；`wnd_proc` 的 `WM_MOUSEMOVE` / `WM_MOUSELEAVE` 只调 `InvalidateRect`；`paint` 增加悬停配色。
+- **已知限制**：DWM 缩略图覆盖了项的大部分面积，高亮只能画在图标条上，视觉强度比不上 macOS 的整项高亮。

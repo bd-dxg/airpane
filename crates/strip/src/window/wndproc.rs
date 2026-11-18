@@ -1,6 +1,7 @@
 //! 预览区窗口的窗口过程与消息循环。
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
@@ -99,9 +100,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 };
                 if hovered != state_ref.hovered {
                     state_ref.hovered = hovered;
-                    // SAFETY: 状态指针由本进程维护。
+                    // 悬停只影响绘制，不重排，列表不会上下滑动（D-049）。
+                    // SAFETY: 只重画本程序自己的窗口。
                     unsafe {
-                        apply_layout(hwnd, state);
+                        let _ = InvalidateRect(Some(hwnd), None, true);
                     }
                 }
             }
@@ -113,9 +115,9 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 let state_ref = unsafe { &mut *state };
                 state_ref.tracking_leave = false;
                 if state_ref.hovered.take().is_some() {
-                    // SAFETY: 状态指针由本进程维护。
+                    // SAFETY: 只重画本程序自己的窗口。
                     unsafe {
-                        apply_layout(hwnd, state);
+                        let _ = InvalidateRect(Some(hwnd), None, true);
                     }
                 }
             }
