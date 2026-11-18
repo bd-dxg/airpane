@@ -49,8 +49,10 @@ pub struct StripItem {
     /// 所属进程，与 `class_name` 一起决定图标缓存键（D-046）。
     pub pid: u32,
     pub class_name: String,
-    /// 源窗口的矩形，用于计算缩略图的宽高比。
+    /// 用于计算宽高比的矩形。活跃窗口传入搬动前的矩形，否则项高会在切换时跳变（D-051）。
     pub rect: Rect,
+    /// 是否是当前在舞台区的窗口。活跃项高亮显示，点击它不做事。
+    pub active: bool,
 }
 
 /// 预览区发出的动作。只有工具区按钮走这里；缩略图点击直接调前台切换。
@@ -206,6 +208,7 @@ impl Strip {
                 icon,
                 thumb,
                 source: item.rect,
+                active: item.active,
                 rect: Default::default(),
                 bar: Default::default(),
             });

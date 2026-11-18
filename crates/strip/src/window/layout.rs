@@ -163,12 +163,11 @@ fn apply_thumbnails(entries: &[Entry]) {
     }
 }
 
-/// 命中测试：缩略图与信息条都算在项内。
-pub(super) fn hit_test(entries: &[Entry], x: i32, y: i32) -> Option<isize> {
+/// 命中测试：缩略图与图标条都算在项内。
+pub(super) fn hit_test(entries: &[Entry], x: i32, y: i32) -> Option<&Entry> {
     entries
         .iter()
         .find(|entry| contains(&entry.rect, x, y) || contains(&entry.bar, x, y))
-        .map(|entry| entry.window)
 }
 
 /// 工具区高度（物理像素）。

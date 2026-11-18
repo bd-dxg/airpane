@@ -24,10 +24,12 @@ const TOOLBAR_BACKGROUND: COLORREF = COLORREF(0x0032_3232);
 /// 缩略图下方图标条的背景色，在列表背景上留出一条能分辨的分隔。
 const ICON_BAND_BACKGROUND: COLORREF = COLORREF(0x002B_2B2B);
 /// 悬停项的图标条背景，比普通项略亮。
-const HOVER_BAND_BACKGROUND: COLORREF = COLORREF(0x0038_3838);
-/// 悬停高亮的强调色（浅蓝），画在图标条上沿。
+const HOVER_BAND_BACKGROUND: COLORREF = COLORREF(0x0034_3434);
+/// 当前在舞台区的项：图标条最亮，配合上沿强调条（D-051）。
+const ACTIVE_BAND_BACKGROUND: COLORREF = COLORREF(0x003C_3C3C);
+/// 活跃项的强调色（浅蓝），画在图标条上沿。
 const ACCENT: COLORREF = COLORREF(0x00FF_A050);
-/// 悬停高亮条的厚度（DIP，D-049）。
+/// 活跃项强调条的厚度（DIP）。
 const ACCENT_DIP: i32 = 3;
 /// 工具区与图标的文字颜色。
 const TEXT_COLOR: COLORREF = COLORREF(0x00E0_E0E0);
@@ -74,12 +76,13 @@ pub(super) fn paint(hwnd: HWND, state: *mut StripState) {
         }
 
         // 图标条：不显示标题，只留一个 32 DIP 的应用图标（D-048）。没有图标的
-        // 项留空，不画占位图形。悬停项只改配色，不改变布局（D-049）。
+        // 项留空，不画占位图形。活跃项与悬停项只改配色，不改变布局（D-049、D-051）。
         if !state.is_null() {
             // SAFETY: 见函数文档，`state` 只在窗口存续期间使用。
             let state = &*state;
             let band_brush: HBRUSH = CreateSolidBrush(ICON_BAND_BACKGROUND);
             let hover_brush: HBRUSH = CreateSolidBrush(HOVER_BAND_BACKGROUND);
+            let active_brush: HBRUSH = CreateSolidBrush(ACTIVE_BAND_BACKGROUND);
             let accent_brush: HBRUSH = CreateSolidBrush(ACCENT);
             let icon_size = scaled(ICON_DIP, dpi);
             let icon_inset = scaled(ICON_INSET_DIP, dpi);
@@ -88,13 +91,16 @@ pub(super) fn paint(hwnd: HWND, state: *mut StripState) {
 
             for entry in &state.entries {
                 let hovered = state.hovered == Some(entry.window);
-                FillRect(
-                    hdc,
-                    &entry.bar,
-                    if hovered { hover_brush } else { band_brush },
-                );
-                if hovered {
-                    // 强调色只占图标条上沿一条，作为「当前悬停」的提示。
+                let background = if entry.active {
+                    active_brush
+                } else if hovered {
+                    hover_brush
+                } else {
+                    band_brush
+                };
+                FillRect(hdc, &entry.bar, background);
+                if entry.active {
+                    // 当前窗口：图标条上沿一条强调色，切窗口时只换这一条。
                     let accent = RECT {
                         left: entry.bar.left,
                         top: entry.bar.top,
@@ -120,6 +126,7 @@ pub(super) fn paint(hwnd: HWND, state: *mut StripState) {
             }
 
             let _ = DeleteObject(accent_brush.into());
+            let _ = DeleteObject(active_brush.into());
             let _ = DeleteObject(hover_brush.into());
             let _ = DeleteObject(band_brush.into());
         }

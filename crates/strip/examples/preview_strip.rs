@@ -22,9 +22,10 @@ fn collect_items() -> Vec<StripItem> {
     let foreground = foreground_window();
     let mut windows: Vec<_> = enum_top_level_windows()
         .into_iter()
-        .filter(|info| info.is_managed() && info.hwnd != foreground)
+        .filter(|info| info.is_managed())
         .collect();
-    // 与主程序一致：按进程名 + 类名 + 句柄固定排序（D-047）。
+    // 与主程序一致：按进程名 + 类名 + 句柄固定排序（D-047），当前前台窗口也列出来
+    // 并标记为活跃（D-051）。
     windows.sort_by_cached_key(|info| {
         (
             info.process_name.to_lowercase(),
@@ -35,6 +36,7 @@ fn collect_items() -> Vec<StripItem> {
     windows
         .into_iter()
         .map(|info| StripItem {
+            active: info.hwnd == foreground,
             window: info.hwnd,
             pid: info.pid,
             class_name: info.class_name,
