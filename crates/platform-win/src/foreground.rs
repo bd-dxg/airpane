@@ -11,8 +11,8 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, SW_RESTORE,
-    SetForegroundWindow, ShowWindow, ShowWindowAsync,
+    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsZoomed,
+    SW_MAXIMIZE, SW_RESTORE, SetForegroundWindow, ShowWindow, ShowWindowAsync,
 };
 
 use crate::window::is_window;
@@ -39,6 +39,22 @@ impl fmt::Display for ActivateError {
 pub fn foreground_window() -> isize {
     // SAFETY: 无参数只读查询。
     unsafe { GetForegroundWindow().0 as isize }
+}
+
+/// 把窗口改为最大化状态。
+///
+/// 用于退出 Stage 模式时恢复原本最大化的窗口。
+pub fn maximize(hwnd: isize) -> bool {
+    if !is_window(hwnd) {
+        return false;
+    }
+    let target = HWND(hwnd as *mut c_void);
+    // SAFETY: 只对目标窗口调 `SW_MAXIMIZE`，不抢焦点。
+    unsafe {
+        let _ = ShowWindow(target, SW_MAXIMIZE);
+    }
+    // SAFETY: 只读查询。
+    unsafe { IsZoomed(target) }.as_bool()
 }
 
 /// 同步还原最小化窗口，返回它是否已经不再是图标状态。

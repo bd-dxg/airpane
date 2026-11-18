@@ -17,7 +17,7 @@ use airpane_platform_win::foreground::{self, foreground_window};
 use airpane_platform_win::monitor;
 use airpane_platform_win::placement::move_window;
 use airpane_platform_win::window::{
-    WindowInfo, enum_managed_windows, inspect_window, is_window, show_state,
+    WindowInfo, enum_managed_windows, inspect_window, is_desktop_window, is_window, show_state,
 };
 use airpane_platform_win::{log_debug, log_info, log_warn, size_store, snapshot_store};
 use airpane_strip::window::{Strip, StripAction, StripItem};
@@ -34,6 +34,8 @@ pub struct App {
     last_items: Vec<StripItem>,
     /// 1Hz 校准的计数，用于每 10 秒做一次全量枚举兜底。
     tick: u32,
+    /// 前台变成桌面（Win+D）时隐藏了预览区，回到普通窗口时需要恢复。
+    desktop_hidden: bool,
     snapshot_path: PathBuf,
     sizes_path: PathBuf,
 }
@@ -48,6 +50,7 @@ impl App {
             moved: BTreeMap::new(),
             last_items: Vec::new(),
             tick: 0,
+            desktop_hidden: false,
             snapshot_path,
             sizes_path,
         }
@@ -84,6 +87,7 @@ impl App {
         self.restore_moved();
         self.registry = WindowRegistry::new();
         self.last_items.clear();
+        self.desktop_hidden = false;
         let _ = strip.sync(&[]);
         strip.set_visible(false);
     }
@@ -118,6 +122,20 @@ impl App {
         }
         match event {
             WindowEvent::Foreground { hwnd } => {
+                // Win+D / 显示桌面：预览区会遮住桌面图标，暂时藏起来。
+                if is_desktop_window(hwnd) {
+                    if !self.desktop_hidden {
+                        self.desktop_hidden = true;
+                        strip.set_visible(false);
+                        log_info!("桌面成为前台，隐藏预览区");
+                    }
+                    return;
+                }
+                if self.desktop_hidden {
+                    self.desktop_hidden = false;
+                    strip.set_visible(true);
+                    log_info!("离开桌面，恢复预览区");
+                }
                 self.refresh_registry();
                 self.focus_window(hwnd, strip);
             }
@@ -152,6 +170,7 @@ impl App {
         } else {
             self.reconcile_tracked();
         }
+        self.enforce_active_bounds(strip);
         self.remember_active_size(strip.width());
         if let Some(active) = self.active
             && !self.registry.contains(active)
@@ -167,7 +186,7 @@ impl App {
         if self.mode != Mode::Stage || hwnd == 0 {
             return;
         }
-        let Some(info) = inspect_window(hwnd) else {
+        let Some(mut info) = inspect_window(hwnd) else {
             self.sync_strip(strip);
             return;
         };
@@ -178,24 +197,29 @@ impl App {
         let hwnd = info.hwnd as i64;
         self.registry.upsert(tracked(&info), true);
 
-        // 最小化窗口不直接搬：它的位置是 -32000 一类的占位值，且异步还原会让后续
-        // 读到的矩形还是旧值。先同步还原，再按还原后的真实矩形走正常流程。
-        let info = if show_state(info.hwnd) == ShowState::Minimized {
+        // 先记住原始显示状态：最大化窗口要先取消最大化才能摆到舞台区，
+        // 退出 Stage 时再把最大化状态恢复回去（D-037）。
+        let original_state = if monitor::is_maximized(info.hwnd) {
+            ShowState::Maximized
+        } else {
+            show_state(info.hwnd)
+        };
+
+        if original_state != ShowState::Normal {
+            // 最小化与最大化都先还原成普通窗口，之后的矩形才是真实可用的。
             if !foreground::restore(info.hwnd) {
-                log_warn!("还原最小化窗口失败：{}", info.process_name);
+                log_warn!("无法还原窗口状态：{}", info.process_name);
                 self.sync_strip(strip);
                 return;
             }
             match inspect_window(info.hwnd) {
-                Some(info) => info,
+                Some(refreshed) => info = refreshed,
                 None => {
                     self.sync_strip(strip);
                     return;
                 }
             }
-        } else {
-            info
-        };
+        }
 
         if self.active == Some(hwnd) {
             // 同一窗口重新获得焦点：只顺手记录尺寸，不重复搬动。
@@ -207,14 +231,15 @@ impl App {
         // 先记下上一个活跃窗口的尺寸，再换人。
         self.remember_active_size(strip.width());
 
-        if monitor::should_skip_placement(info.hwnd) {
-            log_debug!("{} 处于最大化或全屏，保持原位（D-026）", info.process_name);
+        // 真全屏（非最大化的覆盖整屏）是游戏与全屏视频，不动它。
+        if original_state == ShowState::Normal && monitor::is_exclusive_fullscreen(info.hwnd) {
+            log_debug!("{} 处于全屏，保持原位（D-026）", info.process_name);
             self.active = Some(hwnd);
             self.sync_strip(strip);
             return;
         }
 
-        self.ensure_snapshot(&info);
+        self.ensure_snapshot(&info, original_state);
         let target = self.target_rect(&info, strip.width());
         match move_window(info.hwnd, target) {
             Ok(()) => {
@@ -247,7 +272,7 @@ impl App {
     }
 
     /// 若该窗口还没有快照，记录下来并落盘。移动之前必须先调用（D-005）。
-    fn ensure_snapshot(&mut self, info: &WindowInfo) {
+    fn ensure_snapshot(&mut self, info: &WindowInfo, state: ShowState) {
         let hwnd = info.hwnd as i64;
         if self.moved.contains_key(&hwnd) {
             return;
@@ -259,7 +284,7 @@ impl App {
                 process_name: info.process_name.clone(),
                 class_name: info.class_name.clone(),
                 rect: info.rect,
-                show_state: ShowState::Normal,
+                show_state: state,
             },
         );
         self.persist_snapshot();
@@ -325,13 +350,44 @@ impl App {
             if !is_window(snapshot.hwnd as isize) {
                 continue;
             }
-            match move_window(snapshot.hwnd as isize, snapshot.rect) {
-                Ok(()) => log_info!("已还原 {} 的位置", snapshot.process_name),
-                Err(err) => log_warn!("还原 {} 失败：{err}", snapshot.process_name),
+            let restored = match snapshot.show_state {
+                // 最大化窗口的矩形由系统决定，直接恢复最大化状态即可。
+                ShowState::Maximized => foreground::maximize(snapshot.hwnd as isize),
+                _ => move_window(snapshot.hwnd as isize, snapshot.rect).is_ok(),
+            };
+            if restored {
+                log_info!("已还原 {} 的状态", snapshot.process_name);
+            } else {
+                log_warn!("还原 {} 失败", snapshot.process_name);
             }
         }
         snapshot_store::clear(&self.snapshot_path);
         self.active = None;
+    }
+
+    /// 活跃窗口被最大化时重新摆回舞台区。
+    ///
+    /// 在舞台区窗口上点最大化不会产生前台事件，只能靠 1Hz 校准发现（D-037）。
+    /// 用户只是手动调尺寸时不会走到这里：只有 `IsZoomed` 才会触发。
+    fn enforce_active_bounds(&mut self, strip: &mut Strip) {
+        let Some(active) = self.active else {
+            return;
+        };
+        if !monitor::is_maximized(active as isize) {
+            return;
+        }
+        if !foreground::restore(active as isize) {
+            return;
+        }
+        let Some(info) = inspect_window(active as isize) else {
+            return;
+        };
+        let target = self.target_rect(&info, strip.width());
+        if move_window(active as isize, target).is_ok() {
+            log_debug!("{} 被最大化，已重新摆回舞台区", info.process_name);
+            self.last_items.clear();
+            self.sync_strip(strip);
+        }
     }
 
     /// 只检查已跟踪的窗口：失效或不再可管理的移除，其余刷新字段。
