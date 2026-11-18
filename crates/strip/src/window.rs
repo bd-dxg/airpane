@@ -15,7 +15,6 @@ use std::sync::mpsc::Sender;
 
 use airpane_core::config::DEFAULT_STRIP_WIDTH_DIP;
 use airpane_core::snapshot::Rect;
-use airpane_core::title::short_title;
 use windows::Win32::Foundation::{HINSTANCE, HWND};
 use windows::Win32::Graphics::Dwm::{DwmRegisterThumbnail, DwmUnregisterThumbnail};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -45,10 +44,6 @@ pub struct StripItem {
     /// 所属进程，与 `class_name` 一起决定图标缓存键（D-046）。
     pub pid: u32,
     pub class_name: String,
-    /// 进程名，标题为空时作为兜底显示。
-    pub process_name: String,
-    /// 原始窗口标题，展示前会按 D-044 压成短标题。
-    pub title: String,
     /// 源窗口的矩形，用于计算缩略图的宽高比。
     pub rect: Rect,
 }
@@ -195,7 +190,6 @@ impl Strip {
                 window: item.window,
                 pid: item.pid,
                 class_name: item.class_name.clone(),
-                title: short_title(&item.title, &item.process_name),
                 icon,
                 thumb,
                 source: item.rect,

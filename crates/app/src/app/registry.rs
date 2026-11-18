@@ -1,5 +1,6 @@
 //! 窗口注册表的维护与预览区同步。
 
+use airpane_core::registry::{self, TrackedWindow};
 use airpane_platform_win::log_warn;
 use airpane_platform_win::window::{enum_managed_windows, inspect_window};
 use airpane_strip::window::{Strip, StripItem};
@@ -61,20 +62,23 @@ impl App {
         }
     }
 
-    /// 预览区只列非活跃窗口，顺序即最近使用顺序。列表没变化就不碰 DWM。
+    /// 预览区只列非活跃窗口，按固定顺序排列（D-047）：点开一个窗口只会让它消失，
+    /// 其余窗口不会因为使用历史而互换位置。列表没变化就不碰 DWM。
     pub(super) fn sync_strip(&mut self, strip: &mut Strip) {
-        let mut items = Vec::with_capacity(self.registry.len().saturating_sub(1));
-        for window in self.registry.iter() {
-            if Some(window.hwnd) == self.active {
-                continue;
-            }
+        let mut windows: Vec<&TrackedWindow> = self
+            .registry
+            .iter()
+            .filter(|window| Some(window.hwnd) != self.active)
+            .collect();
+        windows.sort_by_cached_key(|window| registry::display_key(window));
+
+        let mut items = Vec::with_capacity(windows.len());
+        for window in windows {
             if let Some(info) = inspect_window(window.hwnd as isize) {
                 items.push(StripItem {
                     window: info.hwnd,
                     pid: info.pid,
                     class_name: info.class_name,
-                    process_name: info.process_name,
-                    title: info.title,
                     rect: info.rect,
                 });
             }
