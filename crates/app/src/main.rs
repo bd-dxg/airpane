@@ -1,6 +1,11 @@
 //! AirPane 主程序入口。
 //!
 //! M1：加载配置与日志、处理崩溃残留的快照、在主线程跑预览区、Stage 布局与模式切换。
+//!
+//! release 构建不申请控制台窗口：作为常驻后台程序，弹一个终端只会在提权启动时
+//! 多出一个没人看的黑窗。调试信息仍然写进日志文件。
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
 mod recovery;
@@ -12,13 +17,25 @@ use airpane_core::config::{CONFIG_VERSION, StartupMode};
 use airpane_platform_win::events::EventMonitor;
 use airpane_platform_win::hotkey::Hotkey;
 use airpane_platform_win::message_loop::{self, LoopMessage};
+use airpane_platform_win::window::find_window_by_class;
 use airpane_platform_win::{config_io, dialog, log_info, log_warn, logging, paths, size_store};
 use airpane_strip::window::{Strip, enable_per_monitor_v2};
 
 /// 模式切换快捷键的注册 id。
 const TOGGLE_MODE_HOTKEY_ID: i32 = 1;
+/// 预览区窗口的类名，用于检测已有实例。
+const STRIP_CLASS_NAME: &str = "AirPaneStrip";
 
 fn main() -> ExitCode {
+    // 单实例：两个 AirPane 会互相抢窗口与快捷键。
+    if find_window_by_class(STRIP_CLASS_NAME).is_some() {
+        dialog::info(
+            "AirPane",
+            "AirPane 已经在运行了。\n\n如果它是以另一种权限启动的（比如普通权限与管理员权限各一个），请先在任务管理器里结束它。",
+        );
+        return ExitCode::SUCCESS;
+    }
+
     if let Err(err) = paths::ensure_app_dir() {
         eprintln!("无法创建应用数据目录: {err}");
     }
