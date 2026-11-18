@@ -27,10 +27,16 @@ pub struct WindowFacts {
     pub visible: bool,
     /// 带 `WS_EX_TOOLWINDOW` 扩展样式。
     pub tool_window: bool,
+    /// 带 `WS_EX_APPWINDOW` 扩展样式：即使有 owner 也应视为独立应用窗口。
+    pub app_window: bool,
+    /// 有 owner 窗口：通常是对话框、弹出窗或控件辅助窗口。
+    pub owned: bool,
     /// `DWMWA_CLOAKED` 非零：属于其他虚拟桌面，或被挂起的 UWP 窗口。
     pub cloaked: bool,
     /// 窗口类名。
     pub class_name: String,
+    /// 是否是顶层窗口（`GetAncestor(GA_ROOT)` 就是它自己）。
+    pub top_level: bool,
     /// 属于 AirPane 自己的进程。
     pub own_process: bool,
 }
@@ -40,9 +46,13 @@ pub struct WindowFacts {
 pub enum RejectReason {
     /// 拿不到类名，通常意味着句柄已经失效。
     EmptyClassName,
+    /// 子窗口或属于其他窗口层级，不属于预览区的管理范围。
+    NotTopLevel,
     Invisible,
     Cloaked,
     ToolWindow,
+    /// 有 owner 且未标 `WS_EX_APPWINDOW`：对话框、弹出窗或应用自建的辅助窗口。
+    OwnedPopup,
     OwnProcess,
     ShellWindow,
 }
@@ -51,9 +61,11 @@ impl fmt::Display for RejectReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let text = match self {
             Self::EmptyClassName => "没有类名",
+            Self::NotTopLevel => "不是顶层窗口",
             Self::Invisible => "不可见",
             Self::Cloaked => "已被 DWM cloak",
             Self::ToolWindow => "工具窗口",
+            Self::OwnedPopup => "附属弹窗",
             Self::OwnProcess => "属于 AirPane 自己",
             Self::ShellWindow => "系统壳窗口",
         };
@@ -69,6 +81,9 @@ pub fn classify(facts: &WindowFacts) -> Result<(), RejectReason> {
     if facts.own_process {
         return Err(RejectReason::OwnProcess);
     }
+    if !facts.top_level {
+        return Err(RejectReason::NotTopLevel);
+    }
     if !facts.visible {
         return Err(RejectReason::Invisible);
     }
@@ -77,6 +92,9 @@ pub fn classify(facts: &WindowFacts) -> Result<(), RejectReason> {
     }
     if facts.tool_window {
         return Err(RejectReason::ToolWindow);
+    }
+    if facts.owned && !facts.app_window {
+        return Err(RejectReason::OwnedPopup);
     }
     if is_shell_window(&facts.class_name) {
         return Err(RejectReason::ShellWindow);
@@ -98,8 +116,11 @@ mod tests {
         WindowFacts {
             visible: true,
             tool_window: false,
+            app_window: false,
+            owned: false,
             cloaked: false,
             class_name: "Notepad".to_string(),
+            top_level: true,
             own_process: false,
         }
     }
@@ -159,6 +180,35 @@ mod tests {
                 "{class_name}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_child_window() {
+        let facts = WindowFacts {
+            top_level: false,
+            ..normal()
+        };
+        assert_eq!(classify(&facts), Err(RejectReason::NotTopLevel));
+    }
+
+    #[test]
+    fn rejects_owned_popup_unless_app_window() {
+        let popup = WindowFacts {
+            owned: true,
+            ..normal()
+        };
+        assert_eq!(classify(&popup), Err(RejectReason::OwnedPopup));
+
+        let app = WindowFacts {
+            owned: true,
+            app_window: true,
+            ..normal()
+        };
+        assert_eq!(
+            classify(&app),
+            Ok(()),
+            "带 WS_EX_APPWINDOW 的 owner 窗口仍应管理"
+        );
     }
 
     #[test]
