@@ -170,6 +170,37 @@ pub(super) fn hit_test(entries: &[Entry], x: i32, y: i32) -> Option<&Entry> {
         .find(|entry| contains(&entry.rect, x, y) || contains(&entry.bar, x, y))
 }
 
+/// 拖拽落点：鼠标在 `y` 时应插入到 `0..=entries.len()` 的哪个位置。
+pub(super) fn drop_index(entries: &[Entry], y: i32) -> usize {
+    for (index, entry) in entries.iter().enumerate() {
+        if y < entry.rect.top + (entry.rect.bottom - entry.rect.top) / 2 {
+            return index;
+        }
+    }
+    entries.len()
+}
+
+/// 拖拽指示线：画在插入位置的上沿（末尾则画在最后一项下方）。
+pub(super) fn drop_line(entries: &[Entry], target: usize, gap: i32) -> Option<RECT> {
+    let thickness = 2;
+    if target < entries.len() {
+        let entry = &entries[target];
+        return Some(RECT {
+            left: entry.rect.left,
+            top: (entry.rect.top - gap / 2 - thickness / 2).max(0),
+            right: entry.rect.right,
+            bottom: (entry.rect.top - gap / 2 + thickness / 2).max(thickness),
+        });
+    }
+    let last = entries.last()?;
+    Some(RECT {
+        left: last.rect.left,
+        top: last.bar.bottom + gap / 2 - thickness / 2,
+        right: last.rect.right,
+        bottom: last.bar.bottom + gap / 2 + thickness / 2,
+    })
+}
+
 /// 工具区高度（物理像素）。
 pub(super) fn toolbar_height(dpi: u32) -> i32 {
     scaled(TOOLBAR_HEIGHT_DIP, dpi)

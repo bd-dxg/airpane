@@ -12,8 +12,8 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{DI_NORMAL, DrawIconEx, HICON};
 
 use super::layout::{
-    ICON_BAND_DIP, ICON_DIP, ICON_INSET_DIP, client_height, client_width, scaled, toolbar_buttons,
-    toolbar_rect,
+    GAP_DIP, ICON_BAND_DIP, ICON_DIP, ICON_INSET_DIP, client_height, client_width, drop_line,
+    scaled, toolbar_buttons, toolbar_rect,
 };
 use super::state::StripState;
 
@@ -27,7 +27,7 @@ const ICON_BAND_BACKGROUND: COLORREF = COLORREF(0x002B_2B2B);
 const HOVER_BAND_BACKGROUND: COLORREF = COLORREF(0x0034_3434);
 /// 当前在舞台区的项：图标条最亮，配合上沿强调条（D-051）。
 const ACTIVE_BAND_BACKGROUND: COLORREF = COLORREF(0x003C_3C3C);
-/// 活跃项的强调色（浅蓝），画在图标条上沿。
+/// 拖拽指示线的厚度由 `layout::drop_line` 决定，这里只需强调色。
 const ACCENT: COLORREF = COLORREF(0x00FF_A050);
 /// 活跃项强调条的厚度（DIP）。
 const ACCENT_DIP: i32 = 3;
@@ -129,6 +129,18 @@ pub(super) fn paint(hwnd: HWND, state: *mut StripState) {
             let _ = DeleteObject(active_brush.into());
             let _ = DeleteObject(hover_brush.into());
             let _ = DeleteObject(band_brush.into());
+
+            // 拖拽指示线：两像素的强调色，标出松手后的落点（D-053）。
+            if let Some(drag) = state.drag {
+                if drag.moved {
+                    let gap = scaled(GAP_DIP, dpi);
+                    if let Some(line) = drop_line(&state.entries, drag.target, gap) {
+                        let line_brush: HBRUSH = CreateSolidBrush(ACCENT);
+                        FillRect(hdc, &line, line_brush);
+                        let _ = DeleteObject(line_brush.into());
+                    }
+                }
+            }
         }
 
         SelectObject(hdc, previous);

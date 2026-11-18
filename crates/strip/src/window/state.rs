@@ -22,9 +22,25 @@ pub(super) struct StripState {
     pub(super) tracking_leave: bool,
     /// 应用图标缓存，同一应用的多个窗口共用。
     pub(super) icons: IconCache,
+    /// 当前正在拖拽的项（D-053）。
+    pub(super) drag: Option<Drag>,
     pub(super) entries: Vec<Entry>,
     /// 工具区动作的出口。
     pub(super) actions: Sender<StripAction>,
+}
+
+/// 拖拽中的项。
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Drag {
+    pub(super) window: isize,
+    /// 按下时的客户区 y 坐标，用于判定是否超过阈值。
+    pub(super) start_y: i32,
+    /// 超过阈值才算拖拽；否则松开时当作点击。
+    pub(super) moved: bool,
+    /// 插入位置：`0..=entries.len()`。
+    pub(super) target: usize,
+    /// 被拖的项是不是当前窗口（那种情况不该激活）。
+    pub(super) active: bool,
 }
 
 pub(super) struct Entry {

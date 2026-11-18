@@ -387,3 +387,12 @@
 - **影响**：`App::fullscreen_hidden` 与 `App::sync_fullscreen_visibility`；`on_event(Foreground)`、`enter_stage`、`reconcile` 各调一次；`leave_stage` 重置两个隐藏标志。
 - **实测**：无边框全屏窗口在前台时 `IsWindowVisible(AirPaneStrip)=false`，关闭后恢复 `true`；另一个用例是窗口先被搬进舞台区、随后自己长到全屏（无前台事件），1Hz 校准也能在 1 秒内隐藏。
 - **已知限制**：任务栏设为自动隐藏时，普通最大化窗口也会覆盖整屏从而隐藏预览区。语义上一致（窗口确实盖住了屏幕），但如果你常用自动隐藏任务栏则需要放宽这条。
+
+## D-053 预览区支持拖动排序，顺序落盘
+
+- **日期**：2026-11-19
+- **决策**：按住缩略图上下拖动改变顺序，松手落位；阈值 4 DIP，超过才算拖拽，否则松开仍是点击切换。顺序按「进程名 + 类名」（两份都转小写）记录在 `%APPDATA%\AirPane\strip-order.json`，跨重启生效。没记录过的窗口排在已记录项之后，组内仍按 D-047 的固定顺序；新窗口自然排到末尾（用户确认）。
+- **理由**：D-047 的固定字母序能防「乱跳」，但无法表达「这两个应用我想放在一起」。手动排序叠加在固定序之上：拖过的项位次由人决定，没拖过的仍可预测。排序单位用（进程名、类名）而不是句柄：句柄跨重启会变，标题又经常变。
+- **影响**：新增 `core::strip_order`（纯逻辑 + 7 个单测）、`platform-win::strip_order_store`、`paths::strip_order_file`；`App::new` 改收 `AppPaths`；`App::reorder` / `flush_order`；`StripAction::Reorder`；`strip` 的 `Drag` 状态、`layout::drop_index` / `drop_line`、`WM_LBUTTONUP` / `WM_CAPTURECHANGED` 处理与 2px 强调色指示线。
+- **实测**：真实桌面拖动第二项到顶部 → `strip-order.json` 写入该键；重启后拖第二项→顶部，结果证明上次的顺序被正确加载；拖到自己身上不写盘、不改顺序。
+- **已知限制**：同一应用的同类窗口作为一组一起移动（无法单独排两个终端）；排序文件只增不减（已退出的应用、关闭多年的窗口仍在表里），文件很小但有洁癖可手动删；同一位置拖到下一个边界会被当作「原位」而不是重排（避免无意义的写盘）。

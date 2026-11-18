@@ -17,4 +17,5 @@ pub mod paths;
 pub mod placement;
 pub mod size_store;
 pub mod snapshot_store;
+pub mod strip_order_store;
 pub mod window;

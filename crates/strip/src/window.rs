@@ -55,13 +55,18 @@ pub struct StripItem {
     pub active: bool,
 }
 
-/// 预览区发出的动作。只有工具区按钮走这里；缩略图点击直接调前台切换。
+/// 预览区发出的动作。只有工具区按钮与拖拽走这里；缩略图点击直接调前台切换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StripAction {
     /// 切回普通桌面 / 重新进入 Stage 模式。
     ToggleMode,
     /// 打开设置面板（M1 只弹提示，M3 接真正的面板）。
     OpenSettings,
+    /// 把 `window` 挪到 `before` 之前，`before` 为 `None` 表示移到末尾（D-053）。
+    Reorder {
+        window: isize,
+        before: Option<isize>,
+    },
 }
 
 /// 预览区窗口的创建错误。
@@ -144,6 +149,7 @@ impl Strip {
             scroll: 0,
             hovered: None,
             tracking_leave: false,
+            drag: None,
             icons: IconCache::default(),
             entries: Vec::new(),
             actions,
@@ -223,6 +229,17 @@ impl Strip {
 
         state.entries = next;
         state.icons.retain_windows(&state.entries);
+        // 列表可能在拖拽过程中变化：被拖的窗口消失就放弃这次拖拽，否则把落点钳回
+        // 范围，避免松手时作用到别的窗口上。
+        if let Some(window) = state.drag.map(|drag| drag.window) {
+            if state.entries.iter().any(|entry| entry.window == window) {
+                if let Some(drag) = state.drag.as_mut() {
+                    drag.target = drag.target.min(state.entries.len());
+                }
+            } else {
+                state.drag = None;
+            }
+        }
         // 悬停的窗口可能已经被切到前台而离开列表。
         let hovered = state.hovered;
         if hovered.is_some()

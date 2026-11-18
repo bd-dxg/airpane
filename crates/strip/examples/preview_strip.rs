@@ -90,6 +90,9 @@ fn main() -> ExitCode {
             match action {
                 StripAction::ToggleMode => println!("示例不处理模式切换"),
                 StripAction::OpenSettings => println!("示例没有设置面板"),
+                StripAction::Reorder { window, before } => {
+                    println!("拖拽排序：{window:#x} → before {before:?}（示例不持久化）")
+                }
             }
         }
 
