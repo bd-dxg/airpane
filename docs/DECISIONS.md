@@ -299,3 +299,11 @@
 - **理由**：任务计划程序（`mmc.exe`）用 `WS_POPUP` 自定义最大化，`IsZoomed` 返回 false 但窗口覆盖整屏。原判定把它当成全屏游戏跳过，于是它一直铺满屏幕盖住预览区。带上标题栏或最小化按钮的窗口说明是应用自己放大，不是全屏展示。
 - **影响**：`platform-win::window::has_window_style`；M2 会用 `SHQueryUserNotificationState` 与进程名单替换这条启发式。
 - **已知限制**：浏览器 F11 全屏可能保留 `WS_MINIMIZEBOX`，会被误当作最大化搬走。M2 修正。
+
+## D-042 release 不申请控制台，并做最小单实例检测
+
+- **日期**：2026-11-19
+- **决策**：`airpane` 在非 debug 构建下使用 `#![windows_subsystem = "windows"]`，不创建控制台窗口；debug 构建保留控制台方便调试。启动时按预览区窗口类名检测已有实例，命中就弹一次提示并退出。
+- **理由**：用户以管理员身份启动 release 版时报「弹个终端出来」，那是 console 子系统的控制台窗口。常驻后台程序不该有它，提权启动时尤其明显。同时提权与普通权限各跑一个实例会互相抢窗口和 `Ctrl+Alt+S`，第二个实例注册快捷键会失败并弹框，体验很差。
+- **影响**：`crates/app/src/main.rs` 的 crate 属性与启动检查；`platform-win::window::find_window_by_class`。完整的单实例（唤起已有实例并打开设置面板）仍然留给 M3。
+- **已知限制**：release 版没有控制台，启动信息只能看 `%APPDATA%\AirPane\logs\airpane.log`。

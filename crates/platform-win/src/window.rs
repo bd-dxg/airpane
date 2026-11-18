@@ -91,6 +91,43 @@ pub fn show_state(hwnd: isize) -> ShowState {
     }
 }
 
+/// 按窗口类名查找第一个顶层窗口的句柄。
+pub fn find_window_by_class(class_name: &str) -> Option<isize> {
+    struct Search<'a> {
+        class_name: &'a str,
+        found: Option<isize>,
+    }
+
+    /// `EnumWindows` 的回调：命中类名时记录句柄并停止枚举。
+    ///
+    /// 安全前提：`lparam` 必须指向存活的 `Search`。
+    unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        // SAFETY: 见函数文档。
+        let search = unsafe { &mut *(lparam.0 as *mut Search) };
+        let mut buf = [0u16; CLASS_NAME_LEN];
+        // SAFETY: 缓冲区长度如实传入。
+        let len = unsafe { GetClassNameW(hwnd, &mut buf) };
+        if len > 0
+            && String::from_utf16_lossy(&buf[..len as usize])
+                .eq_ignore_ascii_case(search.class_name)
+        {
+            search.found = Some(hwnd.0 as isize);
+            return BOOL::from(false);
+        }
+        BOOL::from(true)
+    }
+
+    let mut search = Search {
+        class_name,
+        found: None,
+    };
+    // SAFETY: 回调只写 `search`，该变量在调用期间存活。
+    unsafe {
+        let _ = EnumWindows(Some(callback), LPARAM(&mut search as *mut Search as isize));
+    }
+    search.found
+}
+
 /// 窗口是否带有指定的窗口样式位（如 `WS_CAPTION`、`WS_MINIMIZEBOX`）。
 pub fn has_window_style(hwnd: isize, style: i32) -> bool {
     if !is_window(hwnd) {
