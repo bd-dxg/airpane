@@ -33,14 +33,26 @@ cargo run -p airpane-strip --example preview_strip -- --seconds 30       # 预�
 cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动画帧耗时与 CPU
 ```
 
+## 提交前必须走完的流程
+
+1. `cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace` 全绿。
+2. 执行 `code-review-expert` skill 审查本次 diff。**审出来的问题必须修复并重跑第 1 步**，不允许带着未处理的 P0/P1 提交；确认不修的要在 PR 描述里写清楚原因。
+3. 执行 `gencom` skill 生成提交信息，提交带 `Signed-off-by`（`git commit -s`）。
+
+## 代码文件大小
+
+- 单个源码文件不超过 **300 行**（含注释与测试）；超出就按职责拆成子模块，用目录形式与父模块同名，例如 `crates/strip/src/window/`。
+- 拆分只移动代码、不改行为；拆完必须重跑测试，纯逻辑要保证单元测试仍覆盖原函数。
+- `prototypes/` 下的一次性原型不受此限制（M1 弃用，不再维护）。
+
 ## 目录结构
 
 | 路径 | 职责 |
 | --- | --- |
 | `crates/core` | 纯逻辑：窗口过滤规则、窗口注册表、快照结构、布局计算。**不依赖 Win32**，必须可单元测试 |
 | `crates/platform-win` | Win32 封装：枚举、WinEvent、前台切换、DPI、快照接口。`unsafe` 集中在这里 |
-| `crates/strip` | 预览区窗口：窄栏、DWM 缩略图、点击切换。`unsafe` 集中在这里 |
-| `crates/app` | 主程序，M0 阶段暂为占位 |
+| `crates/strip` | 预览区窗口：窄栏、DWM 缩略图、点击切换。`unsafe` 集中在这里；`window/` 下拆出布局、绘制、消息处理与状态 |
+| `crates/app` | 主程序：配置与日志、消息循环、Stage 控制器；`app/` 下按搬窗口、快照与尺寸、观察期、注册表拆分 |
 | `prototypes/anim` | M0 的一次性动画原型，验证完废弃，M1 不继承 |
 | `docs/` | `PRD.md`（冻结的草案基线）、`DECISIONS.md`（冲突时以此为准）、`DEPENDENCIES.md`、`CHANGELOG.md`、M0 的两份报告 |
 
