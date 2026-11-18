@@ -1,0 +1,2 @@
+// 应用图标：exe 的 1 号 ICON 资源，预览区窗口类也用它（见 `strip::window`）。
+1 ICON "airpane.ico"

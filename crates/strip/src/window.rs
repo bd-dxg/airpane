@@ -20,11 +20,11 @@ use windows::Win32::Graphics::Dwm::{DwmRegisterThumbnail, DwmUnregisterThumbnail
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, GWLP_USERDATA, IDC_ARROW, LoadCursorW, RegisterClassW, SW_HIDE,
-    SW_SHOWNOACTIVATE, SetWindowLongPtrW, ShowWindow, WNDCLASSW, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    CreateWindowExW, DestroyWindow, GWLP_USERDATA, IDC_ARROW, LoadCursorW, LoadIconW,
+    RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SetWindowLongPtrW, ShowWindow, WNDCLASSW,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
-use windows::core::{HSTRING, w};
+use windows::core::{HSTRING, PCWSTR, w};
 
 use layout::{apply_layout, client_width, physical_width, relayout_window, work_area};
 use state::{Entry, IconCache, StripState};
@@ -36,6 +36,11 @@ pub use wndproc::{enable_per_monitor_v2, run_message_loop};
 pub const DEFAULT_WIDTH_DIP: u32 = DEFAULT_STRIP_WIDTH_DIP;
 
 const CLASS_NAME: windows::core::PCWSTR = w!("AirPaneStrip");
+/// 应用图标资源 id，对应 `assets/airpane.rc` 里的 `1 ICON`。
+///
+/// 资源由 `crates/app/build.rs` 编进 exe；`preview_strip` 这类示例没有这份资源，
+/// 加载失败就退化成没有窗口图标。
+const APP_ICON_ID: usize = 1;
 
 /// 预览区要展示的一个窗口。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +98,14 @@ impl Strip {
             // 留下的状态（例如应用启动中的等待光标）。显式指定标准箭头。
             // SAFETY: `LoadCursorW` 只返回系统预定义光标的句柄，不会失败。
             hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
+            // SAFETY: 图标资源编在本 exe 里，句柄由系统共享，不需要释放。
+            hIcon: unsafe {
+                LoadIconW(
+                    Some(HINSTANCE(instance.0)),
+                    PCWSTR(APP_ICON_ID as *const u16),
+                )
+            }
+            .unwrap_or_default(),
             ..Default::default()
         };
         // SAFETY: 窗口类只注册一次；重复注册会返回 0 并设置 ERROR_CLASS_ALREADY_EXISTS。
