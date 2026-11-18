@@ -3,6 +3,7 @@
 //! 枚举顶层窗口，收集过滤所需的事实，交给 `airpane_core::window::classify` 判定，
 //! 返回可被 AirPane 管理的窗口列表。
 
+use airpane_core::registry::{TrackedWindow, WindowRegistry};
 use airpane_core::snapshot::Rect;
 use airpane_core::window::{RejectReason, WindowFacts, classify};
 use core::ffi::c_void;
@@ -14,8 +15,9 @@ use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, EnumWindows, GWL_EXSTYLE, GetClassNameW, GetWindowLongPtrW, GetWindowRect,
-    GetWindowTextW, GetWindowThreadProcessId, IsWindow, IsWindowVisible, WS_EX_TOOLWINDOW,
+    EnumChildWindows, EnumWindows, GA_ROOT, GW_OWNER, GWL_EXSTYLE, GetAncestor, GetClassNameW,
+    GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+    IsWindow, IsWindowVisible, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 use windows::core::{BOOL, PWSTR};
 
@@ -85,6 +87,14 @@ unsafe extern "system" fn collect_handle(hwnd: HWND, lparam: LPARAM) -> BOOL {
     BOOL::from(true)
 }
 
+/// 读取单个原始句柄的窗口信息与过滤判定。句柄已失效时返回 `None`。
+pub fn inspect_window(hwnd: isize) -> Option<WindowInfo> {
+    if !is_window(hwnd) {
+        return None;
+    }
+    inspect(HWND(hwnd as *mut c_void))
+}
+
 /// UWP 应用的顶层窗口由 `ApplicationFrameHost.exe` 承载，真实应用进程在其子窗口里。
 const APPLICATION_FRAME_WINDOW_CLASS: &str = "ApplicationFrameWindow";
 
@@ -95,9 +105,12 @@ fn inspect(hwnd: HWND) -> Option<WindowInfo> {
     let pid = resolve_app_pid(hwnd, &class_name, host_pid);
     let facts = WindowFacts {
         visible: is_visible(hwnd),
-        tool_window: has_tool_window_style(hwnd),
+        tool_window: has_ex_style(hwnd, WS_EX_TOOLWINDOW.0 as isize),
+        app_window: has_ex_style(hwnd, WS_EX_APPWINDOW.0 as isize),
+        owned: has_owner(hwnd),
         cloaked: is_cloaked(hwnd),
         class_name: class_name.clone(),
+        top_level: is_top_level(hwnd),
         own_process: host_pid == std::process::id(),
     };
     let verdict = classify(&facts);
@@ -149,10 +162,77 @@ fn is_visible(hwnd: HWND) -> bool {
     unsafe { IsWindowVisible(hwnd) }.as_bool()
 }
 
-fn has_tool_window_style(hwnd: HWND) -> bool {
+/// 用实时窗口信息校准注册表：移除已失效或不再可管理的窗口，并刷新其余窗口的字段。
+///
+/// 必需的兑底：实测 `EVENT_OBJECT_DESTROY` 在进程退出时不会投递，`WS_EX_*` 与 owner
+/// 的变化也不产生事件（见 `docs/DECISIONS.md` D-020）。事件负责秒内响应，本函数负责
+/// 纠偏。返回发生变化的窗口数量。
+pub fn reconcile_registry(registry: &mut WindowRegistry) -> usize {
+    let mut removals: Vec<i64> = Vec::new();
+    let mut updates = Vec::new();
+
+    for window in registry.iter() {
+        match inspect_window(window.hwnd as isize) {
+            Some(info) if info.is_managed() => updates.push(TrackedWindow {
+                hwnd: info.hwnd as i64,
+                pid: info.pid,
+                process_name: info.process_name,
+                class_name: info.class_name,
+                title: info.title,
+            }),
+            _ => removals.push(window.hwnd),
+        }
+    }
+
+    let mut changed = 0;
+    for window in updates {
+        let before = registry.iter().find(|w| w.hwnd == window.hwnd);
+        if before != Some(&window) {
+            changed += 1;
+        }
+        registry.upsert(window, false);
+    }
+    for hwnd in &removals {
+        if registry.remove(*hwnd).is_some() {
+            changed += 1;
+        }
+    }
+    changed
+}
+
+/// 删除注册表中已失效的窗口，返回删除数量。
+///
+/// 必需的兑底：实测系统不会为进程退出而销毁的窗口发送 `EVENT_OBJECT_DESTROY`，
+/// 只能靠 `IsWindow` 校验发现（见 `docs/DECISIONS.md` D-020）。
+pub fn prune_dead_windows(registry: &mut WindowRegistry) -> usize {
+    let dead: Vec<i64> = registry
+        .iter()
+        .map(|window| window.hwnd)
+        .filter(|hwnd| !is_window(*hwnd as isize))
+        .collect();
+    for hwnd in &dead {
+        registry.remove(*hwnd);
+    }
+    dead.len()
+}
+
+fn has_ex_style(hwnd: HWND, style: isize) -> bool {
     // SAFETY: 只读查询，对任意句柄安全。
     let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
-    (ex_style & WS_EX_TOOLWINDOW.0 as isize) != 0
+    (ex_style & style) != 0
+}
+
+/// 顶层窗口的根祖先就是它自己。子窗口不应进入预览区。
+fn is_top_level(hwnd: HWND) -> bool {
+    // SAFETY: 只读查询，对任意句柄安全。
+    unsafe { GetAncestor(hwnd, GA_ROOT) == hwnd }
+}
+
+/// 有 owner 的窗口通常是对话框或应用自建的辅助窗口，不应进入预览区。
+fn has_owner(hwnd: HWND) -> bool {
+    // SAFETY: 只读查询，对任意句柄安全。
+    let owner = unsafe { GetWindow(hwnd, GW_OWNER) };
+    owner.is_ok_and(|owner| !owner.0.is_null())
 }
 
 fn is_cloaked(hwnd: HWND) -> bool {

@@ -138,3 +138,17 @@
 - **决策**：PRD 4.1「没有记录的窗口默认占满舞台区(屏幕剩余空间)」中的「剩余空间」解释为「主显示器可用区域（扣除任务栏）减去预览区」，与多显示器无关。
 - **理由**：PRD 已明确 v1 只在主显示器启用 Stage 模式，另一解读（其他显示器）与 4.1 的多显示器条款冲突。
 - **影响**：M1 T1.2 的布局计算与单元测试。
+
+## D-020 事件同步采用「事件驱动 + 1Hz 校准」的混合模型
+
+- **日期**：2026-11-18
+- **决策**：`SetWinEventHook`（`WINEVENT_OUTOFCONTEXT`）负责秒内响应，另以 1 次/秒的频率对已跟踪窗口重新分类并校准列表。不再假设纯事件流能维持一致。
+- **理由**：T0.3 实测（Win11 build 26200，12 轮强杀记事本）发现 `EVENT_OBJECT_DESTROY` **完全没有投递**，12 次进程退出收到 0 个 destroy 事件；同时 `WS_EX_*` 与 owner 的变化不产生任何 WinEvent。只靠事件会让已退出的窗口永久留在预览区。
+- **影响**：PRD 5.3 的「避免轮询」改为「避免高频轮询」，1Hz 校准保留（PRD 5.7 允许每秒一次校验）；M1 的窗口模型必须包含同样的校准步骤。
+
+## D-021 窗口分类要求顶层窗口且无 owner
+
+- **日期**：2026-11-18
+- **决策**：除不可见、DWM cloak、`WS_EX_TOOLWINDOW`、系统壳窗口外，窗口还必须是顶层窗口（`GetAncestor(hwnd, GA_ROOT) == hwnd`），且无 owner（有 owner 时只有带 `WS_EX_APPWINDOW` 才保留）。
+- **理由**：记事本（Win11 版本）会创建大量名为 `Non Client Input Sink Window`、空标题的子窗口与附属窗口，并在创建时临时可见。缺少这两条规则时，一次 12 轮开关测试会在预览区模型里堆积 70+ 个幽灵窗口。
+- **影响**：`airpane-core::window` 的 `WindowFacts` 增加 `top_level`、`owned`、`app_window`；新增 `RejectReason::NotTopLevel` 与 `RejectReason::OwnedPopup`。
