@@ -28,6 +28,7 @@ cargo run -p airpane-platform-win --example list_windows -- --all        # 窗�
 cargo run -p airpane-platform-win --example snapshot_check               # 写快照并挪开窗口，验证启动恢复
 cargo run -p airpane-platform-win --example watch_events -- --seconds 30 # 事件同步一致性，0 不一致才退出码 0
 cargo run -p airpane-platform-win --example switch_check -- --rounds 200 # 前台切换成功率，低于 99% 退出码 1
+cargo run -p airpane-platform-win --example idle_cpu -- --seconds 20        # 运行中 AirPane 的空闲 CPU 与窗口数，20 窗口 ≥ 1% 非零退出
 cargo run -p airpane-strip --example preview_strip -- --seconds 30       # 预览区 + 缩略图 + 点击切换
 cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动画帧耗时与 CPU
 ```
@@ -79,7 +80,7 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 ## 当前状态
 
 - M0（T0.1–T0.6）已全部完成并合并。
-- M1（T1.1–T1.8）进行中：配置与日志、快照与崩溃恢复、Stage 布局与尺寸记忆、快捷键与工具区已合并；只剩验收（`idle_cpu` 示例、`test-report-M1.md`、3 天自用）。
+- M1（T1.1–T1.8）功能已全部合并；待办只剩验收：3 天日常使用（`docs/test-report-M1.md` 第 2.7 节的结论待补）。
 - 主程序默认进入 Stage 模式，`Ctrl+Alt+S` 或预览区底部的「桌面」按钮切换模式；切回普通桌面时全部窗口还原。
-- M1 范围见 `docs/PRD.md` 第 11.4 节；已知缺口见 `docs/test-report-M0.md` 第 3 节。
+- M1 范围与验收结果见 `docs/test-report-M1.md`；已知缺口见其第 4 节。
 - 开工前建议先读 `docs/DECISIONS.md`，它是与 PRD 冲突时的唯一真相源；写窗口相关代码前必读 D-030（位置尺寸统一用 DWM 可见边界）、D-022（只移动活跃窗口）与 D-034（最小化窗口先同步还原）。

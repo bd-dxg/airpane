@@ -30,6 +30,10 @@ pub struct App {
     active: Option<i64>,
     /// 被本程序移动过的窗口及其原始状态，退出时按它还原。
     moved: BTreeMap<i64, WindowSnapshot>,
+    /// 预览区上一次同步的列表，没变化就不再碰 DWM。
+    last_items: Vec<StripItem>,
+    /// 1Hz 校准的计数，用于每 10 秒做一次全量枚举兜底。
+    tick: u32,
     snapshot_path: PathBuf,
     sizes_path: PathBuf,
 }
@@ -42,6 +46,8 @@ impl App {
             sizes: WindowSizeStore::from_file(sizes),
             active: None,
             moved: BTreeMap::new(),
+            last_items: Vec::new(),
+            tick: 0,
             snapshot_path,
             sizes_path,
         }
@@ -77,6 +83,7 @@ impl App {
         log_info!("切回普通桌面模式");
         self.restore_moved();
         self.registry = WindowRegistry::new();
+        self.last_items.clear();
         let _ = strip.sync(&[]);
         strip.set_visible(false);
     }
@@ -131,12 +138,20 @@ impl App {
         }
     }
 
-    /// 1Hz 校准：重新枚举、记录活跃窗口尺寸、修正预览区。
+    /// 1Hz 校准：检查已跟踪的窗口、记录活跃窗口尺寸、修正预览区。
+    ///
+    /// 默认只检查注册表里已有的窗口：新窗口由 `Create`/`Show` 事件发现（D-020）。
+    /// 每 10 秒做一次全量枚举，兜住事件丢失的情况。
     pub fn reconcile(&mut self, strip: &mut Strip) {
         if self.mode != Mode::Stage {
             return;
         }
-        self.refresh_registry();
+        self.tick = self.tick.wrapping_add(1);
+        if self.tick % 10 == 0 {
+            self.refresh_registry();
+        } else {
+            self.reconcile_tracked();
+        }
         self.remember_active_size(strip.width());
         if let Some(active) = self.active
             && !self.registry.contains(active)
@@ -319,6 +334,20 @@ impl App {
         self.active = None;
     }
 
+    /// 只检查已跟踪的窗口：失效或不再可管理的移除，其余刷新字段。
+    fn reconcile_tracked(&mut self) {
+        let hwnds: Vec<i64> = self.registry.iter().map(|window| window.hwnd).collect();
+        for hwnd in hwnds {
+            match inspect_window(hwnd as isize) {
+                Some(info) if info.is_managed() => {
+                    let activate = self.active == Some(hwnd);
+                    self.registry.upsert(tracked(&info), activate);
+                }
+                _ => self.forget_window(hwnd as isize),
+            }
+        }
+    }
+
     fn refresh_registry(&mut self) {
         let windows = enum_managed_windows();
         let alive: Vec<i64> = windows.iter().map(|info| info.hwnd as i64).collect();
@@ -358,7 +387,7 @@ impl App {
         }
     }
 
-    /// 预览区只列非活跃窗口，顺序即最近使用顺序。
+    /// 预览区只列非活跃窗口，顺序即最近使用顺序。列表没变化就不碰 DWM。
     fn sync_strip(&mut self, strip: &mut Strip) {
         let mut items = Vec::with_capacity(self.registry.len().saturating_sub(1));
         for window in self.registry.iter() {
@@ -372,9 +401,14 @@ impl App {
                 });
             }
         }
+        if items == self.last_items {
+            return;
+        }
         if let Err(err) = strip.sync(&items) {
             log_warn!("同步预览区失败：{err}");
+            return;
         }
+        self.last_items = items;
     }
 }
 

@@ -40,6 +40,7 @@ cargo run -p airpane-platform-win --example list_windows -- --all        # 窗�
 cargo run -p airpane-platform-win --example snapshot_check               # 写快照并挪开窗口，验证启动恢复
 cargo run -p airpane-platform-win --example watch_events -- --seconds 30 # 事件同步一致性
 cargo run -p airpane-platform-win --example switch_check -- --rounds 200 # 前台切换成功率
+cargo run -p airpane-platform-win --example idle_cpu -- --seconds 20       # 运行中 AirPane 的空闲 CPU
 cargo run -p airpane-strip --example preview_strip -- --seconds 30       # 预览区 + 缩略图 + 点击切换
 ```
 

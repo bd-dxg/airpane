@@ -58,7 +58,7 @@ const FALLBACK_ASPECT: f64 = 9.0 / 16.0;
 const CLASS_NAME: windows::core::PCWSTR = w!("AirPaneStrip");
 
 /// 预览区要展示的一个窗口。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StripItem {
     pub window: isize,
     /// 源窗口的矩形，用于计算缩略图的宽高比。
