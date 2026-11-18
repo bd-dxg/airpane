@@ -71,7 +71,12 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 - **记事本等应用会创建临时可见的辅助窗口**（`Non Client Input Sink Window`、空标题）。过滤必须包含「顶层窗口」与「owner 窗口除 `WS_EX_APPWINDOW` 外排除」，见 D-021。
 - **`AttachThreadInput` 要挂到当前前台窗口的线程**，挂目标窗口的线程无法绕过前台锁（实测 36.67% vs 100%）。
 - **DWM 缩略图不参与目标窗口内部的视觉树**，任何 D2D/DComp 变换都不会影响它；动画只能改覆盖层窗口的矩形。
-- `windows` 0.62 里 `BOOL` 在 `windows::core::BOOL`；`HTHUMBNAIL` 在绑定中是 `isize`；`EVENT_*` 常量在 `WindowsAndMessaging`，而 `SetWinEventHook` 在 `UI::Accessibility`。
+- **分层窗口与 Acrylic 都做不出「缩略图清晰 + 背景通透」**：`WS_EX_LAYERED` 的 alpha 整窗生效，缩略图 `opacity` 上限 255 无法补偿；`WS_THICKFRAME` + `DwmExtendFrameIntoClientArea` + `DWMSBT_TRANSIENTWINDOW` 全部返回 Ok 但画面不变。macOS 台前调度用的是自绘合成，等价实现需要 DirectComposition（见 D-043）。
+- **`mmc.exe`（任务计划程序）用 `WS_POPUP` 自定义最大化**：`IsZoomed` 返回 false 但铺满整屏，不能只看「覆盖整屏」就当成全屏游戏（见 D-041）。
+- **提权窗口在普通权限下改不动**：`SetWindowPos` 返回「拒绝访问」（UIPI）。日志表现为 `移动 mmc.exe 失败：拒绝访问`，这不是 bug；验证提权路径要 `Start-Process .\target\release\airpane.exe -Verb RunAs`。
+- **验收前必须重新构建可执行文件**：`cargo clippy` 与 `cargo test` 不会更新 `target\debug\airpane.exe`，直接 `Start-Process` 跑旧二进制会得出错误结论。改完先 `cargo build --bin airpane`（或 `--release`）。
+- **测之前清干净旧实例**：两个 AirPane 会互抢窗口与 `Ctrl+Alt+S`。已有单实例检测（D-042）会弹提示并退出，但仍建议先 `Get-Process airpane | Stop-Process`。
+- `windows` 0.62 里 `BOOL` 在 `windows::core::BOOL`；`HTHUMBNAIL` 在绑定中是 `isize`；`EVENT_*` 常量在 `WindowsAndMessaging`，而 `SetWinEventHook` 在 `UI::Accessibility`；`LoadCursorW` 的 `IDC_ARROW` 也在 `WindowsAndMessaging`；`GET_WHEEL_DELTA_WPARAM` 宏没有绑定，需手动从 `wparam` 高 16 位取。
 
 ### 环境限制
 
@@ -80,7 +85,8 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 ## 当前状态
 
 - M0（T0.1–T0.6）已全部完成并合并。
-- M1（T1.1–T1.8）功能已全部合并；待办只剩验收：3 天日常使用（`docs/test-report-M1.md` 第 2.7 节的结论待补）。
+- M1（T1.1–T1.8）功能已全部合并，并完成一轮试用反馈修复；待办是预览区 UI 改造（图标与标题、padding、悬停）与 3 天日常使用验收。
+- release 构建不申请控制台窗口，启动信息看 `%APPDATA%\AirPane\logs\airpane.log`；debug 构建保留控制台。
 - 主程序默认进入 Stage 模式，`Ctrl+Alt+S` 或预览区底部的「桌面」按钮切换模式；切回普通桌面时全部窗口还原。
 - M1 范围与验收结果见 `docs/test-report-M1.md`；已知缺口见其第 4 节。
-- 开工前建议先读 `docs/DECISIONS.md`，它是与 PRD 冲突时的唯一真相源；写窗口相关代码前必读 D-030（位置尺寸统一用 DWM 可见边界）、D-022（只移动活跃窗口）与 D-034（最小化窗口先同步还原）。
+- 开工前建议先读 `docs/DECISIONS.md`，它是与 PRD 冲突时的唯一真相源；写窗口相关代码前必读 D-030（位置尺寸统一用 DWM 可见边界）、D-022（只移动活跃窗口）、D-034（最小化窗口先同步还原）、D-039/D-040（尺寸记忆与最大化/启动的交互）。

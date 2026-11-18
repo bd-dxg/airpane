@@ -307,3 +307,10 @@
 - **理由**：用户以管理员身份启动 release 版时报「弹个终端出来」，那是 console 子系统的控制台窗口。常驻后台程序不该有它，提权启动时尤其明显。同时提权与普通权限各跑一个实例会互相抢窗口和 `Ctrl+Alt+S`，第二个实例注册快捷键会失败并弹框，体验很差。
 - **影响**：`crates/app/src/main.rs` 的 crate 属性与启动检查；`platform-win::window::find_window_by_class`。完整的单实例（唤起已有实例并打开设置面板）仍然留给 M3。
 - **已知限制**：release 版没有控制台，启动信息只能看 `%APPDATA%\AirPane\logs\airpane.log`。
+
+## D-043 预览区不做半透明，M3 用 DirectComposition 重写渲染
+
+- **日期**：2026-11-19
+- **决策**：M1 的预览区保持不透明纯色背景。不做整窗半透明，也不做 Acrylic 背景。「缩略图清晰 + 背景通透」的 macOS 台前调度观感，改为 M3 用 DirectComposition 自绘渲染实现。
+- **理由**：两次实验都走了到底。`WS_EX_LAYERED` 加 alpha 能让窗口半透明且缩略图正常显示，但 alpha 是整窗生效，缩略图 `opacity` 上限是 255，无法比背景更实，结果是缩略图一起变淡。`WS_THICKFRAME` + `DwmExtendFrameIntoClientArea(-1)` + `DWMWA_SYSTEMBACKDROP_TYPE = DWMSBT_TRANSIENTWINDOW` 三个 API 全部返回成功，但窗口仍是纯黑不透明（系统透明效果已开启）。色键透明会把缩略图里的同色像素一并扣掉。macOS 那边用的是自绘合成层，这在 Windows 上对应 DirectComposition。
+- **影响**：`crates/strip/src/window.rs` 保持 GDI 纯色绘制；M3 的渲染重写任务包含这项。实验过程与结论同时记在 AGENTS.md 的「已经踩过的坑」，避免以后重复尝试。
