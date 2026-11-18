@@ -7,5 +7,6 @@ pub mod config;
 pub mod registry;
 pub mod snapshot;
 pub mod stage;
+pub mod title;
 pub mod window;
 pub mod window_sizes;

@@ -77,6 +77,7 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 - **验收前必须重新构建可执行文件**：`cargo clippy` 与 `cargo test` 不会更新 `target\debug\airpane.exe`，直接 `Start-Process` 跑旧二进制会得出错误结论。改完先 `cargo build --bin airpane`（或 `--release`）。
 - **测之前清干净旧实例**：两个 AirPane 会互抢窗口与 `Ctrl+Alt+S`。已有单实例检测（D-042）会弹提示并退出，但仍建议先 `Get-Process airpane | Stop-Process`。
 - `windows` 0.62 里 `BOOL` 在 `windows::core::BOOL`；`HTHUMBNAIL` 在绑定中是 `isize`；`EVENT_*` 常量在 `WindowsAndMessaging`，而 `SetWinEventHook` 在 `UI::Accessibility`；`LoadCursorW` 的 `IDC_ARROW` 也在 `WindowsAndMessaging`；`GET_WHEEL_DELTA_WPARAM` 宏没有绑定，需手动从 `wparam` 高 16 位取。
+- `SHGetFileInfoW` 同时被 `Win32_UI_Shell` 与 `Win32_Storage_FileSystem` 两个 feature 门控，只开前者编不过；`TrackMouseEvent` 与 `TME_LEAVE` 在 `UI::Input::KeyboardAndMouse`，而 `WM_MOUSELEAVE` 只在 `UI::Controls`（为一个常量不值得加 feature，手动定义 0x02A3）。
 
 ### 环境限制
 
@@ -85,7 +86,7 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 ## 当前状态
 
 - M0（T0.1–T0.6）已全部完成并合并。
-- M1（T1.1–T1.8）功能已全部合并，并完成一轮试用反馈修复；待办是预览区 UI 改造（图标与标题、padding、悬停）与 3 天日常使用验收。
+- M1（T1.1–T1.8）功能已全部合并，并完成两轮试用反馈修复（行为修复 D-036 ~ D-042，预览区 UI 改造 D-044 ~ D-046）；待办是 3 天日常使用验收。
 - release 构建不申请控制台窗口，启动信息看 `%APPDATA%\AirPane\logs\airpane.log`；debug 构建保留控制台。
 - 主程序默认进入 Stage 模式，`Ctrl+Alt+S` 或预览区底部的「桌面」按钮切换模式；切回普通桌面时全部窗口还原。
 - M1 范围与验收结果见 `docs/test-report-M1.md`；已知缺口见其第 4 节。

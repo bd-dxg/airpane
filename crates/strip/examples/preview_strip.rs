@@ -25,6 +25,10 @@ fn collect_items() -> Vec<StripItem> {
         .filter(|info| info.is_managed() && info.hwnd != foreground)
         .map(|info| StripItem {
             window: info.hwnd,
+            pid: info.pid,
+            class_name: info.class_name,
+            process_name: info.process_name,
+            title: info.title,
             rect: info.rect,
         })
         .collect()

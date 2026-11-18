@@ -314,3 +314,27 @@
 - **决策**：M1 的预览区保持不透明纯色背景。不做整窗半透明，也不做 Acrylic 背景。「缩略图清晰 + 背景通透」的 macOS 台前调度观感，改为 M3 用 DirectComposition 自绘渲染实现。
 - **理由**：两次实验都走了到底。`WS_EX_LAYERED` 加 alpha 能让窗口半透明且缩略图正常显示，但 alpha 是整窗生效，缩略图 `opacity` 上限是 255，无法比背景更实，结果是缩略图一起变淡。`WS_THICKFRAME` + `DwmExtendFrameIntoClientArea(-1)` + `DWMWA_SYSTEMBACKDROP_TYPE = DWMSBT_TRANSIENTWINDOW` 三个 API 全部返回成功，但窗口仍是纯黑不透明（系统透明效果已开启）。色键透明会把缩略图里的同色像素一并扣掉。macOS 那边用的是自绘合成层，这在 Windows 上对应 DirectComposition。
 - **影响**：`crates/strip/src/window.rs` 保持 GDI 纯色绘制；M3 的渲染重写任务包含这项。实验过程与结论同时记在 AGENTS.md 的「已经踩过的坑」，避免以后重复尝试。
+
+## D-044 预览区标题取「分隔符分段」的中间段
+
+- **日期**：2026-11-19
+- **决策**：预览区标题只认 `" - "` 作为分隔符：分段（去掉空段）≥ 3 时取倒数第二段，否则取第一段；结果为空时显示进程名。规则实现为 `core::title::short_title`，纯逻辑带单测；预览区在同步时算一次，标题变化靠已有的 `EVENT_OBJECT_NAMECHANGE` 触发刷新。
+- **理由**：200 DIP 宽的预览区放不下完整标题。Windows 应用的标题几乎都是「文档 - 项目或文件夹 - 应用名」，倒数第二段正好是用户认得的那一层：VS Code 显示项目名、资源管理器显示文件夹名。放在 `core` 里是为了能脱离 Win32 单测各种标题形态。
+- **影响**：新增 `crates/core/src/title.rs`；`StripItem` 增加 `pid`、`class_name`、`process_name`、`title` 字段，`app` 与 `preview_strip` 示例同步填充。
+- **已知限制**：Edge 的「页面标题 - 个人 - Microsoft Edge」会显示成「个人」。标题规则不做按应用的特例，等真实使用反馈再决定要不要加。
+
+## D-045 预览区信息条、内边距与悬停放大参数
+
+- **日期**：2026-11-19
+- **决策**：每项改成「缩略图 + 底部 20 DIP 信息条」，信息条内左侧 16 DIP 应用图标、6 DIP 间距、右侧标题（超长用省略号截断），没有图标的项也保留图标位置以保证标题左边缘对齐。列表内边距 8 DIP、项间距 6 DIP。悬停项的缩略图区按 6/5 放大（+20%），上限仍是 160 DIP，下方项顺移，不做过渡动画。悬停用 `TrackMouseEvent(TME_LEAVE)` 收 `WM_MOUSELEAVE` 复位，悬停状态按窗口句柄记录而不是下标，列表重排后依然对得上。
+- **理由**：只有缩略图的预览区认不出是哪个窗口，标题是刚需。悬停放大是为了在不加宽预览区的前提下看清某一项。无动画遵循 D-018（过渡动画属于 M3）。
+- **影响**：`layout_entries` 增加 `hovered` 参数，`Entry` 增加 `bar`、`title`、`icon` 字段；`WM_MOUSEMOVE` 与 `WM_MOUSELEAVE` 分支；命中测试把信息条也算进项内，点信息条同样切换窗口。
+- **已知限制**：已经顶到 160 DIP 的高窗口悬停不再放大；放大只用重排实现，鼠标停在两项交界处时高度会跳变一次。
+
+## D-046 应用图标三级兜底，按 (pid, 类名) 缓存
+
+- **日期**：2026-11-19
+- **决策**：图标按 `WM_GETICON`（`ICON_BIG` → `ICON_SMALL2` → `ICON_SMALL`）→ `GetClassLongPtrW(GCLP_HICON)` → `SHGetFileInfoW(SHGFI_ICON | SHGFI_SMALLICON)` 取 exe 图标 的顺序三级兜底。缓存键是 `(pid, 类名)`，随预览区列表同步清理。前两级拿到的句柄不属于本进程，不能 `DestroyIcon`；第三级由 `SHGetFileInfoW` 分配，交给 `AppIcon` 的 Drop 释放。
+- **理由**：只靠 `WM_GETICON` 会漏掉一批不设窗口图标的程序（终端、部分 Qt/Electron 应用），而只看 exe 图标又会把「同一进程不同类用不同图标」的场景抹平。缓存按类名区分、按 pid 分组，兼顾两者；`AppIcon` 记住所有权是因为销毁别人的图标句柄会破坏系统图标缓存。
+- **影响**：新增 `platform-win::icon`；`platform-win::window` 抽出 `process_path`（原 `query_process_name` 内部逻辑）。`Cargo.toml` 的 `windows` feature 增加 `Win32_UI_Shell` 与 `Win32_Storage_FileSystem`——`SHGetFileInfoW` 同时被这两个 feature 门控，只开前者编不过。
+- **已知限制**：`WM_GETICON` 用 `SendMessageTimeoutW` + `SMTO_ABORTIFHUNG`（每次查询 100ms 超时）发送，无响应的应用最多少见地拖慢一次同步；图标加载发生在同步路径上，不做后台线程（一次会话里每个应用只付一次）。`SHGFI_SMALLICON` 取的是系统小图标，高 DPI 下靠 `DrawIconEx` 放大，150% 以上会略糊（DPI 验收缺口，M4 补齐）。
