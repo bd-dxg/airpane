@@ -20,6 +20,16 @@ const SHELL_CLASS_NAMES: &[&str] = &[
     "XamlExplorerHostIslandWindow",
 ];
 
+/// 系统 UI 宿主的进程名。这些窗口看起来像普通顶层窗口，但它们是开始菜单、搜索、
+/// 音量/网络面板、输入法候选框等，搬走会让系统 UI 坏掉。
+const SHELL_PROCESS_NAMES: &[&str] = &[
+    "StartMenuExperienceHost.exe",
+    "SearchHost.exe",
+    "ShellExperienceHost.exe",
+    "TextInputHost.exe",
+    "LockApp.exe",
+];
+
 /// 判定一个窗口是否可被管理所需的事实。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WindowFacts {
@@ -35,6 +45,8 @@ pub struct WindowFacts {
     pub cloaked: bool,
     /// 窗口类名。
     pub class_name: String,
+    /// 进程可执行文件名。UWP 窗口填的是解析后的真实应用进程。
+    pub process_name: String,
     /// 是否是顶层窗口（`GetAncestor(GA_ROOT)` 就是它自己）。
     pub top_level: bool,
     /// 属于 AirPane 自己的进程。
@@ -55,6 +67,8 @@ pub enum RejectReason {
     OwnedPopup,
     OwnProcess,
     ShellWindow,
+    /// 系统 UI 宿主进程：开始菜单、搜索、输入法候选框等。
+    ShellProcess,
 }
 
 impl fmt::Display for RejectReason {
@@ -68,6 +82,7 @@ impl fmt::Display for RejectReason {
             Self::OwnedPopup => "附属弹窗",
             Self::OwnProcess => "属于 AirPane 自己",
             Self::ShellWindow => "系统壳窗口",
+            Self::ShellProcess => "系统 UI 宿主窗口",
         };
         f.write_str(text)
     }
@@ -99,6 +114,9 @@ pub fn classify(facts: &WindowFacts) -> Result<(), RejectReason> {
     if is_shell_window(&facts.class_name) {
         return Err(RejectReason::ShellWindow);
     }
+    if is_shell_process(&facts.process_name) {
+        return Err(RejectReason::ShellProcess);
+    }
     Ok(())
 }
 
@@ -106,6 +124,12 @@ fn is_shell_window(class_name: &str) -> bool {
     SHELL_CLASS_NAMES
         .iter()
         .any(|shell| shell.eq_ignore_ascii_case(class_name))
+}
+
+fn is_shell_process(process_name: &str) -> bool {
+    SHELL_PROCESS_NAMES
+        .iter()
+        .any(|shell| shell.eq_ignore_ascii_case(process_name))
 }
 
 #[cfg(test)]
@@ -120,6 +144,7 @@ mod tests {
             owned: false,
             cloaked: false,
             class_name: "Notepad".to_string(),
+            process_name: "notepad.exe".to_string(),
             top_level: true,
             own_process: false,
         }
@@ -178,6 +203,26 @@ mod tests {
                 classify(&facts),
                 Err(RejectReason::ShellWindow),
                 "{class_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_shell_processes_case_insensitively() {
+        for process_name in [
+            "StartMenuExperienceHost.exe",
+            "searchhost.exe",
+            "ShellExperienceHost.exe",
+            "TextInputHost.exe",
+        ] {
+            let facts = WindowFacts {
+                process_name: process_name.to_string(),
+                ..normal()
+            };
+            assert_eq!(
+                classify(&facts),
+                Err(RejectReason::ShellProcess),
+                "{process_name}"
             );
         }
     }

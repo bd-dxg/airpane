@@ -9,6 +9,8 @@ use std::path::Path;
 
 use airpane_core::config::AppConfig;
 
+use crate::json_io;
+
 /// 读取配置；文件缺失或损坏时写回默认配置。
 ///
 /// 损坏的文件先重命名为 `config.json.broken`，避免把用户手写的内容直接覆盖掉。
@@ -52,14 +54,7 @@ pub fn load_or_create(path: &Path) -> (AppConfig, Option<String>) {
 
 /// 原子写入配置：先写 `config.json.tmp`，再改名覆盖正式文件。
 pub fn save(path: &Path, config: &AppConfig) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let text = serde_json::to_string_pretty(config).map_err(io::Error::other)?;
-    let temp = path.with_extension("json.tmp");
-    fs::write(&temp, text)?;
-    // Windows 上 `fs::rename` 使用 MoveFileEx(MOVEFILE_REPLACE_EXISTING)，可直接覆盖。
-    fs::rename(&temp, path)
+    json_io::write_atomic(path, config)
 }
 
 #[cfg(test)]

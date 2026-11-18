@@ -4,6 +4,7 @@
 //! 的消息循环，不向目标进程注入任何代码（PRD 11.3 第 1 条）。监听线程自己跑消息
 //! 循环，事件通过 channel 交给调用方。
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, RecvError, Sender, channel};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -50,6 +51,17 @@ pub enum WindowEvent {
 
 /// 事件出口。回调由系统在监听线程上调用，拿不到自定义上下文，因此放在全局。
 static EVENT_SINK: OnceLock<Mutex<Option<Sender<WindowEvent>>>> = OnceLock::new();
+
+/// 唤醒目标：主线程 id 与消息号。事件线程每收到一个事件就投递一次。
+static WAKEUP_THREAD: AtomicU32 = AtomicU32::new(0);
+static WAKEUP_MESSAGE: AtomicU32 = AtomicU32::new(0);
+
+/// 设置事件线程唤醒主线程用的目标。
+///
+pub fn set_wakeup(thread_id: u32, message: u32) {
+    WAKEUP_MESSAGE.store(message, Ordering::Relaxed);
+    WAKEUP_THREAD.store(thread_id, Ordering::Relaxed);
+}
 
 fn sink() -> &'static Mutex<Option<Sender<WindowEvent>>> {
     EVENT_SINK.get_or_init(|| Mutex::new(None))
@@ -218,5 +230,20 @@ fn emit(event: WindowEvent) {
     };
     if let Some(sender) = guard.as_ref() {
         let _ = sender.send(event);
+    }
+    drop(guard);
+    wake_up();
+}
+
+/// 踢一下主线程，让它在自己的消息循环里处理事件。
+fn wake_up() {
+    let thread_id = WAKEUP_THREAD.load(Ordering::Relaxed);
+    let message = WAKEUP_MESSAGE.load(Ordering::Relaxed);
+    if thread_id == 0 || message == 0 {
+        return;
+    }
+    // SAFETY: 只向本进程内已知线程投递一条空消息；`PostThreadMessageW` 不阻塞。
+    unsafe {
+        let _ = PostThreadMessageW(thread_id, message, WPARAM(0), LPARAM(0));
     }
 }

@@ -37,7 +37,7 @@ fn main() -> ExitCode {
 
     enable_per_monitor_v2();
 
-    let mut strip = match Strip::create() {
+    let mut strip = match Strip::create(airpane_strip::window::DEFAULT_WIDTH_DIP) {
         Ok(strip) => strip,
         Err(err) => {
             eprintln!("创建预览区失败: {err}");
