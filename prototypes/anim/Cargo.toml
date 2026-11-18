@@ -1,0 +1,17 @@
+[package]
+name = "airpane-anim-prototype"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "M0 动画路线验证原型：DWM 缩略图 + 覆盖层动画（验证后废弃）"
+publish = false
+
+[dependencies]
+airpane-core = { path = "../../crates/core" }
+airpane-platform-win = { path = "../../crates/platform-win" }
+windows.workspace = true
+
+[lints]
+workspace = true
