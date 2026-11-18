@@ -411,18 +411,18 @@ fn window_rect(hwnd: HWND) -> Rect {
     }
 }
 
-/// 取进程可执行文件名（不含路径）。拿不到时返回空串，不影响其他过滤规则。
-fn query_process_name(pid: u32) -> String {
+/// 进程可执行文件的完整路径。拿不到时返回 `None`。
+///
+/// 预览区按 exe 取文件图标时会用到（D-046）。
+pub fn process_path(pid: u32) -> Option<String> {
     if pid == 0 {
-        return String::new();
+        return None;
     }
     let mut buf = [0u16; PROCESS_PATH_LEN];
     let mut size = buf.len() as u32;
-    // SAFETY: 以查询权限打开进程，缓冲区长度如实传入；失败时直接返回空串。
+    // SAFETY: 以查询权限打开进程，缓冲区长度如实传入；失败时返回 None。
     unsafe {
-        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
-            return String::new();
-        };
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let result = QueryFullProcessImageNameW(
             handle,
             PROCESS_NAME_WIN32,
@@ -430,15 +430,20 @@ fn query_process_name(pid: u32) -> String {
             &mut size,
         );
         let _ = CloseHandle(handle);
-        if result.is_err() {
-            return String::new();
-        }
+        result.ok()?;
     }
-    let path = String::from_utf16_lossy(&buf[..size as usize]);
-    Path::new(&path)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or(path)
+    Some(String::from_utf16_lossy(&buf[..size as usize]))
+}
+
+/// 取进程可执行文件名（不含路径）。拿不到时返回空串，不影响其他过滤规则。
+fn query_process_name(pid: u32) -> String {
+    match process_path(pid) {
+        Some(path) => Path::new(&path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or(path),
+        None => String::new(),
+    }
 }
 
 #[cfg(test)]

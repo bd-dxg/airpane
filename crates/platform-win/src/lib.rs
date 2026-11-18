@@ -8,6 +8,7 @@ pub mod dialog;
 pub mod events;
 pub mod foreground;
 pub mod hotkey;
+pub mod icon;
 pub mod json_io;
 pub mod logging;
 pub mod message_loop;

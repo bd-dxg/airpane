@@ -524,6 +524,10 @@ impl App {
             if let Some(info) = inspect_window(window.hwnd as isize) {
                 items.push(StripItem {
                     window: info.hwnd,
+                    pid: info.pid,
+                    class_name: info.class_name,
+                    process_name: info.process_name,
+                    title: info.title,
                     rect: info.rect,
                 });
             }
