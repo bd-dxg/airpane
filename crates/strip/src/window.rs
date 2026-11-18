@@ -229,6 +229,17 @@ impl Strip {
 
         state.entries = next;
         state.icons.retain_windows(&state.entries);
+        // 列表可能在拖拽过程中变化：被拖的窗口消失就放弃这次拖拽，否则把落点钳回
+        // 范围，避免松手时作用到别的窗口上。
+        if let Some(window) = state.drag.map(|drag| drag.window) {
+            if state.entries.iter().any(|entry| entry.window == window) {
+                if let Some(drag) = state.drag.as_mut() {
+                    drag.target = drag.target.min(state.entries.len());
+                }
+            } else {
+                state.drag = None;
+            }
+        }
         // 悬停的窗口可能已经被切到前台而离开列表。
         let hovered = state.hovered;
         if hovered.is_some()

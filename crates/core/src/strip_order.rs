@@ -66,6 +66,10 @@ impl StripOrderFile {
         key: &StripKey,
         before: Option<&StripKey>,
     ) -> bool {
+        // 同一应用的同类窗口共享一个 key：落点只能是它自己，拖动不成任何变化。
+        if before == Some(key) {
+            return false;
+        }
         let baseline = self.merged(display);
         let mut next = baseline.clone();
         next.retain(|existing| existing != key);
@@ -170,6 +174,22 @@ mod tests {
         let display = vec![StripKey::of(&windows[0])];
 
         assert!(!order.apply_drag(&display, &StripKey::of(&windows[0]), Some(&display[0])));
+        assert!(order.keys.is_empty());
+    }
+
+    #[test]
+    fn dragging_before_its_own_group_is_a_no_op() {
+        let mut order = StripOrderFile::default();
+        let first = window("msedge.exe", "Chrome_WidgetWin_1", 10);
+        let second = window("msedge.exe", "Chrome_WidgetWin_1", 11);
+        let display = vec![StripKey::of(&first)];
+
+        // 同类窗口共享同一个 key，落点只能是它自己，不应该被当成「移到末尾」。
+        assert!(!order.apply_drag(
+            &display,
+            &StripKey::of(&first),
+            Some(&StripKey::of(&second))
+        ));
         assert!(order.keys.is_empty());
     }
 

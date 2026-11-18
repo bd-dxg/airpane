@@ -178,7 +178,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                 target: 0,
                                 active,
                             });
+                            // 拖拽期间不再画悬停，避免高亮留在别的项上。
+                            (*state).hovered = None;
                             let _ = SetCapture(hwnd);
+                            let _ = InvalidateRect(Some(hwnd), None, true);
                         }
                     }
                 }
