@@ -84,9 +84,12 @@ pub fn covers_primary_monitor(hwnd: isize) -> bool {
         && bounds.bottom >= monitor.bottom - 1
 }
 
-/// M1 的最小全屏保护：命中时不移动、不缩放该窗口。
-pub fn should_skip_placement(hwnd: isize) -> bool {
-    is_maximized(hwnd) || covers_primary_monitor(hwnd)
+/// M1 的最小全屏保护：命中时不得移动、不得缩放该窗口。
+///
+/// 只针对「真全屏」：可视边界覆盖整屏且**未最大化**（游戏、全屏视频、演示）。
+/// 最大化窗口不再属于跳过范围——它们在 Stage 模式下应当摆到舞台区（D-037）。
+pub fn is_exclusive_fullscreen(hwnd: isize) -> bool {
+    covers_primary_monitor(hwnd) && !is_maximized(hwnd)
 }
 
 fn to_rect(rect: RECT) -> Rect {
@@ -113,6 +116,6 @@ mod tests {
     fn invalid_window_is_never_maximized_or_fullscreen() {
         assert!(!is_maximized(0));
         assert!(!covers_primary_monitor(0));
-        assert!(!should_skip_placement(0));
+        assert!(!is_exclusive_fullscreen(0));
     }
 }

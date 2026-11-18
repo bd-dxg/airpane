@@ -90,6 +90,24 @@ pub fn show_state(hwnd: isize) -> ShowState {
     }
 }
 
+/// 读取窗口的类名。句柄失效时返回 `None`。
+pub fn window_class(hwnd: isize) -> Option<String> {
+    if !is_window(hwnd) {
+        return None;
+    }
+    let class_name = window_class_name(HWND(hwnd as *mut c_void));
+    (!class_name.is_empty()).then_some(class_name)
+}
+
+/// 判断窗口是否属于桌面（`Progman` / `WorkerW`）。
+///
+/// 按 Win+D 或点“显示桌面”后，前台会变成这两个类名的窗口。
+pub fn is_desktop_window(hwnd: isize) -> bool {
+    window_class(hwnd).is_some_and(|class| {
+        class.eq_ignore_ascii_case("Progman") || class.eq_ignore_ascii_case("WorkerW")
+    })
+}
+
 /// 判断一个原始整数句柄是否仍指向存在的窗口。
 ///
 /// 安全前提：`IsWindow` 只读取句柄表，对任意取值都是安全查询，不会解引用调用方

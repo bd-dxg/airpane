@@ -26,10 +26,11 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
-    GetMessageW, GetWindowLongPtrW, HWND_TOPMOST, MSG, PostQuitMessage, RegisterClassW, SW_HIDE,
-    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    TranslateMessage, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_MOUSEWHEEL,
-    WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    GetMessageW, GetWindowLongPtrW, HWND_TOPMOST, IDC_ARROW, LoadCursorW, MSG, PostQuitMessage,
+    RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, TranslateMessage, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
+    WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::{BOOL, HSTRING, w};
 
@@ -128,6 +129,10 @@ impl Strip {
             lpfnWndProc: Some(wnd_proc),
             hInstance: HINSTANCE(instance.0),
             lpszClassName: CLASS_NAME,
+            // 不设光标时 `DefWindowProc` 不会主动设置，鼠标形状会继承上一个窗口
+            // 留下的状态（例如应用启动中的等待光标）。显式指定标准箭头。
+            // SAFETY: `LoadCursorW` 只返回系统预定义光标的句柄，不会失败。
+            hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
             ..Default::default()
         };
         // SAFETY: 窗口类只注册一次；重复注册会返回 0 并设置 ERROR_CLASS_ALREADY_EXISTS。
