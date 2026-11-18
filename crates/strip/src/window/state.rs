@@ -31,6 +31,8 @@ pub(super) struct Entry {
     pub(super) window: isize,
     pub(super) pid: u32,
     pub(super) class_name: String,
+    /// 当前在舞台区的窗口（D-051）。
+    pub(super) active: bool,
     /// 应用图标句柄，生命周期由 `StripState::icons` 持有。
     pub(super) icon: Option<isize>,
     /// DWM 缩略图句柄（`HTHUMBNAIL`，在绑定里表示为 `isize`）。

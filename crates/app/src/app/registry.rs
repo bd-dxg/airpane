@@ -62,24 +62,32 @@ impl App {
         }
     }
 
-    /// 预览区只列非活跃窗口，按固定顺序排列（D-047）：点开一个窗口只会让它消失，
-    /// 其余窗口不会因为使用历史而互换位置。列表没变化就不碰 DWM。
+    /// 预览区列出全部被管理窗口，按固定顺序排列（D-047）：列表里永远是同一批窗口，
+    /// 切换只会换高亮，位置不动。当前在舞台区的窗口也列出来并标记 `active`（D-051）。
+    /// 列表没变化就不碰 DWM。
     pub(super) fn sync_strip(&mut self, strip: &mut Strip) {
-        let mut windows: Vec<&TrackedWindow> = self
-            .registry
-            .iter()
-            .filter(|window| Some(window.hwnd) != self.active)
-            .collect();
+        let mut windows: Vec<&TrackedWindow> = self.registry.iter().collect();
         windows.sort_by_cached_key(|window| registry::display_key(window));
 
         let mut items = Vec::with_capacity(windows.len());
         for window in windows {
             if let Some(info) = inspect_window(window.hwnd as isize) {
+                let active = Some(window.hwnd) == self.active;
+                // 活跃窗口被搬进舞台区后宽高比会变；若按当前矩形算，它的项高会在
+                // 切换瞬间跳一下，下面的项全跟着动。用快照里的原始矩形算，列表就静止。
+                let rect = if active {
+                    self.moved
+                        .get(&window.hwnd)
+                        .map_or(info.rect, |snapshot| snapshot.rect)
+                } else {
+                    info.rect
+                };
                 items.push(StripItem {
                     window: info.hwnd,
                     pid: info.pid,
                     class_name: info.class_name,
-                    rect: info.rect,
+                    rect,
+                    active,
                 });
             }
         }

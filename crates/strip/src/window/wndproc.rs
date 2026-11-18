@@ -94,7 +94,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 // 工具区上的移动不算悬停列表项。
                 let list_bottom = client_height(hwnd) - toolbar_height(state_ref.dpi);
                 let hovered = if y < list_bottom {
-                    hit_test(&state_ref.entries, x, y)
+                    hit_test(&state_ref.entries, x, y).map(|entry| entry.window)
                 } else {
                     None
                 };
@@ -142,9 +142,11 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     let _ = actions.send(StripAction::ToggleMode);
                     events::wake();
                 } else if y < client_height(hwnd) - toolbar_height(dpi) {
-                    // 列表被工具区遮住的部分不参与点击。
-                    if let Some(window) = hit_test(entries, x, y) {
-                        let _ = activate(window);
+                    // 列表被工具区遮住的部分不参与点击；点当前窗口不做事。
+                    if let Some(entry) = hit_test(entries, x, y) {
+                        if !entry.active {
+                            let _ = activate(entry.window);
+                        }
                     }
                 }
             }
