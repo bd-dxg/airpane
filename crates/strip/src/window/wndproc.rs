@@ -5,11 +5,13 @@ use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, MSG,
-    PostQuitMessage, TranslateMessage, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
+    PostQuitMessage, TranslateMessage, WM_CAPTURECHANGED, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
 };
 
 use airpane_platform_win::events;
@@ -17,11 +19,11 @@ use airpane_platform_win::foreground::activate;
 
 use super::StripAction;
 use super::layout::{
-    apply_layout, client_height, client_width, contains, hit_test, relayout_window, scaled,
-    toolbar_buttons, toolbar_height,
+    apply_layout, client_height, client_width, contains, drop_index, hit_test, relayout_window,
+    scaled, toolbar_buttons, toolbar_height,
 };
 use super::paint::paint;
-use super::state::StripState;
+use super::state::{Drag, StripState};
 
 /// `WM_MOUSELEAVE` 在绑定里属于 `Win32_UI_Controls`，为一个常量不值得加 feature。
 const WM_MOUSELEAVE: u32 = 0x02A3;
@@ -93,14 +95,34 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 }
                 // 工具区上的移动不算悬停列表项。
                 let list_bottom = client_height(hwnd) - toolbar_height(state_ref.dpi);
-                let hovered = if y < list_bottom {
-                    hit_test(&state_ref.entries, x, y).map(|entry| entry.window)
+
+                // 拖拽：超过阈值才算真拖，之后按鼠标位置算插入点（D-053）。
+                let mut redraw = false;
+                if let Some(drag) = state_ref.drag.as_mut() {
+                    if !drag.moved && (y - drag.start_y).abs() > scaled(4, state_ref.dpi) {
+                        drag.moved = true;
+                        redraw = true;
+                    }
+                    if drag.moved {
+                        let target = drop_index(&state_ref.entries, y);
+                        if target != drag.target {
+                            drag.target = target;
+                            redraw = true;
+                        }
+                    }
                 } else {
-                    None
-                };
-                if hovered != state_ref.hovered {
-                    state_ref.hovered = hovered;
-                    // 悬停只影响绘制，不重排，列表不会上下滑动（D-049）。
+                    let hovered = if y < list_bottom {
+                        hit_test(&state_ref.entries, x, y).map(|entry| entry.window)
+                    } else {
+                        None
+                    };
+                    if hovered != state_ref.hovered {
+                        state_ref.hovered = hovered;
+                        redraw = true;
+                    }
+                }
+                if redraw {
+                    // 悬停与拖拽都只影响绘制，不重排，列表不会上下滑动（D-049）。
                     // SAFETY: 只重画本程序自己的窗口。
                     unsafe {
                         let _ = InvalidateRect(Some(hwnd), None, true);
@@ -128,9 +150,11 @@ pub(super) unsafe extern "system" fn wnd_proc(
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
             if !state.is_null() {
                 // SAFETY: 状态指针由本进程维护，只在窗口存续期间使用。
-                let (actions, entries) = unsafe {
+                let (actions, entry) = unsafe {
                     let state = &*state;
-                    (state.actions.clone(), &state.entries)
+                    let entry =
+                        hit_test(&state.entries, x, y).map(|entry| (entry.window, entry.active));
+                    (state.actions.clone(), entry)
                 };
                 let dpi = unsafe { (*state).dpi };
                 let buttons = toolbar_buttons(dpi, client_width(hwnd), client_height(hwnd));
@@ -142,11 +166,81 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     let _ = actions.send(StripAction::ToggleMode);
                     events::wake();
                 } else if y < client_height(hwnd) - toolbar_height(dpi) {
-                    // 列表被工具区遮住的部分不参与点击；点当前窗口不做事。
-                    if let Some(entry) = hit_test(entries, x, y) {
-                        if !entry.active {
-                            let _ = activate(entry.window);
+                    // 列表被工具区遮住的部分不参与点击。按下先记下拖拽起点，
+                    // 移动超过阈值才算拖拽，否则松开时当作点击（D-053）。
+                    if let Some((window, active)) = entry {
+                        // SAFETY: 状态指针由本进程维护；捕获鼠标后能收到窗外的松开。
+                        unsafe {
+                            (*state).drag = Some(Drag {
+                                window,
+                                start_y: y,
+                                moved: false,
+                                target: 0,
+                                active,
+                            });
+                            let _ = SetCapture(hwnd);
                         }
+                    }
+                }
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            let released = if state.is_null() {
+                None
+            } else {
+                // SAFETY: 状态指针由本进程维护，只在窗口存续期间使用。
+                let drag = unsafe { (*state).drag.take() };
+                // SAFETY: 只释放本窗口的鼠标捕获。
+                unsafe {
+                    let _ = ReleaseCapture();
+                }
+                drag
+            };
+            if let Some(drag) = released {
+                if drag.moved {
+                    // SAFETY: 状态指针由本进程维护。
+                    let (actions, before) = unsafe {
+                        let state = &*state;
+                        let dragged = state
+                            .entries
+                            .iter()
+                            .position(|entry| entry.window == drag.window);
+                        // `None` 表示落点就是自己，不该重排；`Some(None)` 表示拖到末尾。
+                        let before = match (state.entries.get(drag.target), dragged) {
+                            (Some(entry), Some(index)) if index != drag.target => {
+                                Some(Some(entry.window))
+                            }
+                            (Some(_), _) => None,
+                            (None, _) => Some(None),
+                        };
+                        (state.actions.clone(), before)
+                    };
+                    if let Some(before) = before {
+                        let _ = actions.send(StripAction::Reorder {
+                            window: drag.window,
+                            before,
+                        });
+                        events::wake();
+                    }
+                    // SAFETY: 只重画本程序自己的窗口。
+                    unsafe {
+                        let _ = InvalidateRect(Some(hwnd), None, true);
+                    }
+                } else if !drag.active {
+                    let _ = activate(drag.window);
+                }
+            }
+            LRESULT(0)
+        }
+        WM_CAPTURECHANGED => {
+            if !state.is_null() {
+                // SAFETY: 状态指针由本进程维护。
+                let had_drag = unsafe { (*state).drag.take().is_some() };
+                if had_drag {
+                    // SAFETY: 只重画本程序自己的窗口。
+                    unsafe {
+                        let _ = InvalidateRect(Some(hwnd), None, true);
                     }
                 }
             }

@@ -19,6 +19,7 @@ use std::time::Instant;
 use airpane_core::registry::WindowRegistry;
 use airpane_core::snapshot::WindowSnapshot;
 use airpane_core::stage::Mode;
+use airpane_core::strip_order::StripOrderFile;
 use airpane_core::window_sizes::{WindowSizeStore, WindowSizesFile};
 use airpane_platform_win::events::WindowEvent;
 use airpane_platform_win::foreground::foreground_window;
@@ -32,6 +33,10 @@ pub struct App {
     mode: Mode,
     registry: WindowRegistry,
     sizes: WindowSizeStore,
+    /// 预览区的手动排序（D-053）。
+    order: StripOrderFile,
+    /// 排序有变化才写盘。
+    order_dirty: bool,
     active: Option<i64>,
     /// 被本程序移动过的窗口及其原始状态，退出时按它还原。
     moved: BTreeMap<i64, WindowSnapshot>,
@@ -47,14 +52,24 @@ pub struct App {
     settle_until: Option<Instant>,
     snapshot_path: PathBuf,
     sizes_path: PathBuf,
+    order_path: PathBuf,
+}
+
+/// Stage 控制器用到的状态文件路径。
+pub struct AppPaths {
+    pub snapshot: PathBuf,
+    pub sizes: PathBuf,
+    pub order: PathBuf,
 }
 
 impl App {
-    pub fn new(sizes: WindowSizesFile, snapshot_path: PathBuf, sizes_path: PathBuf) -> Self {
+    pub fn new(sizes: WindowSizesFile, order: StripOrderFile, paths: AppPaths) -> Self {
         Self {
             mode: Mode::Normal,
             registry: WindowRegistry::new(),
             sizes: WindowSizeStore::from_file(sizes),
+            order,
+            order_dirty: false,
             active: None,
             moved: BTreeMap::new(),
             last_items: Vec::new(),
@@ -62,8 +77,9 @@ impl App {
             desktop_hidden: false,
             fullscreen_hidden: false,
             settle_until: None,
-            snapshot_path,
-            sizes_path,
+            snapshot_path: paths.snapshot,
+            sizes_path: paths.sizes,
+            order_path: paths.order,
         }
     }
 
@@ -117,6 +133,7 @@ impl App {
     pub fn on_action(&mut self, action: StripAction, strip: &mut Strip) {
         match action {
             StripAction::ToggleMode => self.toggle_mode(strip),
+            StripAction::Reorder { window, before } => self.reorder(window, before, strip),
             StripAction::OpenSettings => {
                 log_info!("设置入口被点击（M1 无设置面板，M3 提供）");
                 airpane_platform_win::dialog::info(

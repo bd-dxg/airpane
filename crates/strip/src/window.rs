@@ -55,13 +55,18 @@ pub struct StripItem {
     pub active: bool,
 }
 
-/// 预览区发出的动作。只有工具区按钮走这里；缩略图点击直接调前台切换。
+/// 预览区发出的动作。只有工具区按钮与拖拽走这里；缩略图点击直接调前台切换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StripAction {
     /// 切回普通桌面 / 重新进入 Stage 模式。
     ToggleMode,
     /// 打开设置面板（M1 只弹提示，M3 接真正的面板）。
     OpenSettings,
+    /// 把 `window` 挪到 `before` 之前，`before` 为 `None` 表示移到末尾（D-053）。
+    Reorder {
+        window: isize,
+        before: Option<isize>,
+    },
 }
 
 /// 预览区窗口的创建错误。
@@ -144,6 +149,7 @@ impl Strip {
             scroll: 0,
             hovered: None,
             tracking_leave: false,
+            drag: None,
             icons: IconCache::default(),
             entries: Vec::new(),
             actions,

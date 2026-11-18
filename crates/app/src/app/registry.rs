@@ -1,8 +1,9 @@
 //! 窗口注册表的维护与预览区同步。
 
-use airpane_core::registry::{self, TrackedWindow};
-use airpane_platform_win::log_warn;
+use airpane_core::registry::TrackedWindow;
+use airpane_core::strip_order::StripKey;
 use airpane_platform_win::window::{enum_managed_windows, inspect_window};
+use airpane_platform_win::{log_warn, strip_order_store};
 use airpane_strip::window::{Strip, StripItem};
 
 use super::App;
@@ -67,7 +68,7 @@ impl App {
     /// 列表没变化就不碰 DWM。
     pub(super) fn sync_strip(&mut self, strip: &mut Strip) {
         let mut windows: Vec<&TrackedWindow> = self.registry.iter().collect();
-        windows.sort_by_cached_key(|window| registry::display_key(window));
+        windows.sort_by_cached_key(|window| self.order.sort_key(window));
 
         let mut items = Vec::with_capacity(windows.len());
         for window in windows {
@@ -99,5 +100,55 @@ impl App {
             return;
         }
         self.last_items = items;
+    }
+
+    /// 处理预览区拖出来的新顺序（D-053）。
+    pub(super) fn reorder(&mut self, moved: isize, before: Option<isize>, strip: &mut Strip) {
+        let Some(moved_key) = self.key_of(moved) else {
+            return;
+        };
+        let before_key = before.and_then(|hwnd| self.key_of(hwnd));
+        let display = self.display_keys();
+        if !self
+            .order
+            .apply_drag(&display, &moved_key, before_key.as_ref())
+        {
+            return;
+        }
+        self.order_dirty = true;
+        self.flush_order();
+        self.last_items.clear();
+        self.sync_strip(strip);
+    }
+
+    fn key_of(&self, hwnd: isize) -> Option<StripKey> {
+        self.registry
+            .iter()
+            .find(|window| window.hwnd == hwnd as i64)
+            .map(StripKey::of)
+    }
+
+    /// 当前显示顺序，按排序单位去重（同一应用的同类窗口相邻）。
+    fn display_keys(&self) -> Vec<StripKey> {
+        let mut windows: Vec<&TrackedWindow> = self.registry.iter().collect();
+        windows.sort_by_cached_key(|window| self.order.sort_key(window));
+        let mut keys: Vec<StripKey> = Vec::new();
+        for window in windows {
+            let key = StripKey::of(window);
+            if keys.last() != Some(&key) {
+                keys.push(key);
+            }
+        }
+        keys
+    }
+
+    fn flush_order(&mut self) {
+        if !self.order_dirty {
+            return;
+        }
+        self.order_dirty = false;
+        if let Err(err) = strip_order_store::write(&self.order_path, &self.order) {
+            log_warn!("写预览区顺序失败：{err}");
+        }
     }
 }

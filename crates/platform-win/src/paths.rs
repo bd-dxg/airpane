@@ -14,6 +14,7 @@ const LOG_DIR_NAME: &str = "logs";
 const CONFIG_FILE_NAME: &str = "config.json";
 const SNAPSHOT_FILE_NAME: &str = "snapshot.json";
 const WINDOW_SIZES_FILE_NAME: &str = "window-sizes.json";
+const STRIP_ORDER_FILE_NAME: &str = "strip-order.json";
 const LOG_FILE_NAME: &str = "airpane.log";
 
 /// 应用数据目录，不存在时连同 `logs` 子目录一起创建。
@@ -46,6 +47,11 @@ pub fn window_sizes_file() -> PathBuf {
     app_dir().join(WINDOW_SIZES_FILE_NAME)
 }
 
+/// 预览区的手动排序。
+pub fn strip_order_file() -> PathBuf {
+    app_dir().join(STRIP_ORDER_FILE_NAME)
+}
+
 /// 日志文件。
 pub fn log_file() -> PathBuf {
     app_dir().join(LOG_DIR_NAME).join(LOG_FILE_NAME)
@@ -69,6 +75,7 @@ mod tests {
             config_file(),
             snapshot_file(),
             window_sizes_file(),
+            strip_order_file(),
             log_file(),
         ] {
             assert!(

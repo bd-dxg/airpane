@@ -18,7 +18,9 @@ use airpane_platform_win::events::EventMonitor;
 use airpane_platform_win::hotkey::Hotkey;
 use airpane_platform_win::message_loop::{self, LoopMessage};
 use airpane_platform_win::window::find_window_by_class;
-use airpane_platform_win::{config_io, dialog, log_info, log_warn, logging, paths, size_store};
+use airpane_platform_win::{
+    config_io, dialog, log_info, log_warn, logging, paths, size_store, strip_order_store,
+};
 use airpane_strip::window::{Strip, enable_per_monitor_v2};
 
 /// 模式切换快捷键的注册 id。
@@ -84,7 +86,16 @@ fn main() -> ExitCode {
     };
 
     let sizes = size_store::read(&paths::window_sizes_file()).unwrap_or_default();
-    let mut app = app::App::new(sizes, paths::snapshot_file(), paths::window_sizes_file());
+    let order = strip_order_store::read(&paths::strip_order_file()).unwrap_or_default();
+    let mut app = app::App::new(
+        sizes,
+        order,
+        app::AppPaths {
+            snapshot: paths::snapshot_file(),
+            sizes: paths::window_sizes_file(),
+            order: paths::strip_order_file(),
+        },
+    );
 
     let (monitor, events) = match EventMonitor::start() {
         Ok((monitor, events)) => (monitor, events),
