@@ -8,6 +8,7 @@ repository.workspace = true
 description = "AirPane 的 Win32 封装层：窗口枚举、WinEvent、DWM 缩略图、DPI、热键、全屏检测"
 
 [dependencies]
+airpane-core = { path = "../core" }
 windows.workspace = true
 
 [lints]

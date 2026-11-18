@@ -1,0 +1,187 @@
+//! 窗口过滤规则。
+//!
+//! 规则来自 PRD 4.1 与 5.3：只管理当前虚拟桌面上、属于普通应用的可见顶层窗口。
+//! 本模块只做纯逻辑判定，Win32 查询结果由 `airpane-platform-win` 填进 [`WindowFacts`]，
+//! 因此可以在任意平台上单元测试。
+
+use core::fmt;
+
+/// 系统壳窗口的类名：任务栏、桌面、开始菜单宿主与任务视图等。
+///
+/// 注意：`Windows.UI.Core.CoreWindow` 不在此列。该类型的实际使用上下文（XAML 岛、
+/// 输入宿主）已被不可见与 cloak 规则滤掉，而保留它可能误杀采用该类的 UWP 应用窗口。
+const SHELL_CLASS_NAMES: &[&str] = &[
+    "Progman",
+    "WorkerW",
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    "ForegroundStaging",
+    "MultitaskingViewFrame",
+    "XamlExplorerHostIslandWindow",
+];
+
+/// 判定一个窗口是否可被管理所需的事实。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WindowFacts {
+    /// `IsWindowVisible` 的结果。最小化的窗口仍然可见，应当保留。
+    pub visible: bool,
+    /// 带 `WS_EX_TOOLWINDOW` 扩展样式。
+    pub tool_window: bool,
+    /// `DWMWA_CLOAKED` 非零：属于其他虚拟桌面，或被挂起的 UWP 窗口。
+    pub cloaked: bool,
+    /// 窗口类名。
+    pub class_name: String,
+    /// 属于 AirPane 自己的进程。
+    pub own_process: bool,
+}
+
+/// 窗口被排除的原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectReason {
+    /// 拿不到类名，通常意味着句柄已经失效。
+    EmptyClassName,
+    Invisible,
+    Cloaked,
+    ToolWindow,
+    OwnProcess,
+    ShellWindow,
+}
+
+impl fmt::Display for RejectReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            Self::EmptyClassName => "没有类名",
+            Self::Invisible => "不可见",
+            Self::Cloaked => "已被 DWM cloak",
+            Self::ToolWindow => "工具窗口",
+            Self::OwnProcess => "属于 AirPane 自己",
+            Self::ShellWindow => "系统壳窗口",
+        };
+        f.write_str(text)
+    }
+}
+
+/// 判断窗口是否可被管理。`Ok(())` 表示进入预览区。
+pub fn classify(facts: &WindowFacts) -> Result<(), RejectReason> {
+    if facts.class_name.is_empty() {
+        return Err(RejectReason::EmptyClassName);
+    }
+    if facts.own_process {
+        return Err(RejectReason::OwnProcess);
+    }
+    if !facts.visible {
+        return Err(RejectReason::Invisible);
+    }
+    if facts.cloaked {
+        return Err(RejectReason::Cloaked);
+    }
+    if facts.tool_window {
+        return Err(RejectReason::ToolWindow);
+    }
+    if is_shell_window(&facts.class_name) {
+        return Err(RejectReason::ShellWindow);
+    }
+    Ok(())
+}
+
+fn is_shell_window(class_name: &str) -> bool {
+    SHELL_CLASS_NAMES
+        .iter()
+        .any(|shell| shell.eq_ignore_ascii_case(class_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn normal() -> WindowFacts {
+        WindowFacts {
+            visible: true,
+            tool_window: false,
+            cloaked: false,
+            class_name: "Notepad".to_string(),
+            own_process: false,
+        }
+    }
+
+    #[test]
+    fn normal_window_is_managed() {
+        assert_eq!(classify(&normal()), Ok(()));
+    }
+
+    #[test]
+    fn minimized_window_stays_visible() {
+        // 最小化不会让 IsWindowVisible 变假，因此仍然被管理。
+        let facts = WindowFacts {
+            visible: true,
+            ..normal()
+        };
+        assert_eq!(classify(&facts), Ok(()));
+    }
+
+    #[test]
+    fn rejects_invisible_window() {
+        let facts = WindowFacts {
+            visible: false,
+            ..normal()
+        };
+        assert_eq!(classify(&facts), Err(RejectReason::Invisible));
+    }
+
+    #[test]
+    fn rejects_cloaked_window() {
+        let facts = WindowFacts {
+            cloaked: true,
+            ..normal()
+        };
+        assert_eq!(classify(&facts), Err(RejectReason::Cloaked));
+    }
+
+    #[test]
+    fn rejects_tool_window() {
+        let facts = WindowFacts {
+            tool_window: true,
+            ..normal()
+        };
+        assert_eq!(classify(&facts), Err(RejectReason::ToolWindow));
+    }
+
+    #[test]
+    fn rejects_shell_windows_case_insensitively() {
+        for class_name in ["Shell_TrayWnd", "progman", "WorkerW"] {
+            let facts = WindowFacts {
+                class_name: class_name.to_string(),
+                ..normal()
+            };
+            assert_eq!(
+                classify(&facts),
+                Err(RejectReason::ShellWindow),
+                "{class_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_own_process_and_empty_class() {
+        let own = WindowFacts {
+            own_process: true,
+            ..normal()
+        };
+        assert_eq!(classify(&own), Err(RejectReason::OwnProcess));
+
+        let empty = WindowFacts {
+            class_name: String::new(),
+            ..normal()
+        };
+        assert_eq!(classify(&empty), Err(RejectReason::EmptyClassName));
+    }
+
+    #[test]
+    fn application_frame_window_is_managed() {
+        let facts = WindowFacts {
+            class_name: "ApplicationFrameWindow".to_string(),
+            ..normal()
+        };
+        assert_eq!(classify(&facts), Ok(()));
+    }
+}

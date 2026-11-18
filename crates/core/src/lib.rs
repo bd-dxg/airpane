@@ -4,3 +4,4 @@
 //! 快照结构、分组、布局与宽度钳制计算。
 
 pub mod snapshot;
+pub mod window;
