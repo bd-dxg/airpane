@@ -1,9 +1,16 @@
-//! 预览区窗口的创建与绘制。
+//! 预览区窗口的创建、缩略图渲染与点击切换。
 
 use core::ffi::c_void;
 use core::fmt;
+use std::collections::HashMap;
 
+use airpane_core::snapshot::Rect;
+use airpane_platform_win::foreground::activate;
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{
+    DWM_THUMBNAIL_PROPERTIES, DWM_TNP_OPACITY, DWM_TNP_RECTDESTINATION, DWM_TNP_VISIBLE,
+    DwmRegisterThumbnail, DwmUnregisterThumbnail, DwmUpdateThumbnailProperties,
+};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, HBRUSH, InvalidateRect,
     PAINTSTRUCT,
@@ -13,21 +20,37 @@ use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    GetSystemMetrics, HWND_TOPMOST, MSG, PostQuitMessage, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN,
-    SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_SHOWWINDOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-    SetWindowPos, SystemParametersInfoW, TranslateMessage, WM_DESTROY, WM_DPICHANGED,
-    WM_ERASEBKGND, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
+    GetMessageW, GetSystemMetrics, GetWindowLongPtrW, HWND_TOPMOST, MSG, PostQuitMessage,
+    RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos, SystemParametersInfoW,
+    TranslateMessage, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_PAINT,
+    WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
-use windows::core::{HSTRING, w};
+use windows::core::{BOOL, HSTRING, w};
 
 /// 预览区的逻辑宽度（DIP）。PRD 4.5 的默认值。
 pub const DEFAULT_WIDTH_DIP: u32 = 200;
 /// 预览区背景色（深灰，M0 阶段的降级视觉）。
 const BACKGROUND: COLORREF = COLORREF(0x0020_2020);
 
+// 布局常量，单位都是 DIP。
+const PADDING_DIP: i32 = 8;
+const GAP_DIP: i32 = 8;
+const MIN_ITEM_DIP: i32 = 56;
+const MAX_ITEM_DIP: i32 = 160;
+/// 源窗口尺寸不可用时使用的宽高比（16:9 的倒数）。
+const FALLBACK_ASPECT: f64 = 9.0 / 16.0;
+
 const CLASS_NAME: windows::core::PCWSTR = w!("AirPaneStrip");
+
+/// 预览区要展示的一个窗口。
+#[derive(Debug, Clone, Copy)]
+pub struct StripItem {
+    pub window: isize,
+    /// 源窗口的矩形，用于计算缩略图的宽高比。
+    pub rect: Rect,
+}
 
 /// 预览区窗口的创建错误。
 #[derive(Debug, Clone)]
@@ -42,6 +65,24 @@ impl fmt::Display for StripError {
 /// 常驻左侧的预览区窗口。
 pub struct Strip {
     hwnd: HWND,
+    /// 指向挂在窗口 `GWLP_USERDATA` 上的状态，窗口过程与实例共享。
+    state: *mut StripState,
+}
+
+/// 窗口过程需要访问的状态。
+struct StripState {
+    dpi: u32,
+    entries: Vec<Entry>,
+}
+
+struct Entry {
+    window: isize,
+    /// DWM 缩略图句柄（`HTHUMBNAIL`，在绑定里表示为 `isize`）。
+    thumb: isize,
+    /// 最近一次已知的源窗口矩形，用于宽高比。
+    source: Rect,
+    /// 缩略图在预览区客户区中的目标矩形。
+    rect: RECT,
 }
 
 impl Strip {
@@ -84,7 +125,18 @@ impl Strip {
         }
         .map_err(|err| StripError(format!("CreateWindowExW 失败: {err}")))?;
 
-        let strip = Self { hwnd };
+        // SAFETY: `GetDpiForWindow` 只读查询本窗口 DPI。
+        let dpi = unsafe { GetDpiForWindow(hwnd) };
+        let state = Box::into_raw(Box::new(StripState {
+            dpi: if dpi == 0 { 96 } else { dpi },
+            entries: Vec::new(),
+        }));
+        // SAFETY: 把状态指针挂到本窗口，窗口过程只在使用期间解引用。
+        unsafe {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize);
+        }
+
+        let strip = Self { hwnd, state };
         strip.relayout();
         Ok(strip)
     }
@@ -93,17 +145,74 @@ impl Strip {
         self.hwnd.0 as isize
     }
 
+    /// 同步要展示的窗口列表，顺序即最近使用顺序（最前的最靠上）。
+    ///
+    /// 已不在列表中的窗口会被注销缩略图，新窗口注册缩略图，然后重新布局。
+    pub fn sync(&mut self, items: &[StripItem]) -> Result<(), StripError> {
+        // SAFETY: `state` 由 `Strip::create` 分配，生命周期跟随 `Strip`。
+        let state = unsafe { &mut *self.state };
+
+        let mut existing: HashMap<isize, Entry> = state
+            .entries
+            .drain(..)
+            .map(|entry| (entry.window, entry))
+            .collect();
+
+        let mut next = Vec::with_capacity(items.len());
+        for item in items {
+            let entry = match existing.remove(&item.window) {
+                Some(mut entry) => {
+                    entry.source = item.rect;
+                    entry
+                }
+                None => {
+                    let source = HWND(item.window as *mut c_void);
+                    // SAFETY: 源窗口由调用方从枚举结果传入，句柄可能已失效，
+                    // `DwmRegisterThumbnail` 会返回错误而不是崩溃。
+                    let thumb = unsafe { DwmRegisterThumbnail(self.hwnd, source) }
+                        .map_err(|err| StripError(format!("注册缩略图失败: {err}")))?;
+                    Entry {
+                        window: item.window,
+                        thumb,
+                        source: item.rect,
+                        rect: RECT::default(),
+                    }
+                }
+            };
+            next.push(entry);
+        }
+
+        for (_, entry) in existing {
+            // SAFETY: 只注销本窗口注册的缩略图。
+            unsafe {
+                let _ = DwmUnregisterThumbnail(entry.thumb);
+            }
+        }
+
+        state.entries = next;
+        layout_entries(state.dpi, client_width(self.hwnd), &mut state.entries);
+        apply_thumbnails(&state.entries);
+        Ok(())
+    }
+
     /// 按当前显示器 DPI 重新计算位置与宽度，并保持置顶。
     pub fn relayout(&self) {
-        relayout_window(self.hwnd);
+        // SAFETY: `state` 由 `Strip::create` 分配。
+        unsafe {
+            relayout_window(self.hwnd, self.state);
+        }
     }
 }
 
 impl Drop for Strip {
     fn drop(&mut self) {
-        // SAFETY: 只销毁本程序创建的窗口。
+        // SAFETY: 只销毁本程序创建的窗口，并取回挂在窗口上的状态。
         unsafe {
             let _ = DestroyWindow(self.hwnd);
+            let ptr = SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0);
+            if ptr != 0 {
+                drop(Box::from_raw(ptr as *mut StripState));
+            }
         }
     }
 }
@@ -129,11 +238,15 @@ pub fn run_message_loop() {
     }
 }
 
-fn relayout_window(hwnd: HWND) {
+/// 重新计算窗口位置、DPI 与缩略图布局。
+///
+/// 安全前提：`state` 要么为空，要么指向存活的 `StripState`。
+unsafe fn relayout_window(hwnd: HWND, state: *mut StripState) {
     let work = work_area();
     // SAFETY: 只查询本窗口所在显示器的 DPI。
     let dpi = unsafe { GetDpiForWindow(hwnd) };
     let dpi = if dpi == 0 { 96 } else { dpi };
+
     // SAFETY: 只移动本程序自己的窗口，并保持置顶与不抢焦点。
     unsafe {
         let _ = SetWindowPos(
@@ -147,10 +260,88 @@ fn relayout_window(hwnd: HWND) {
         );
         let _ = InvalidateRect(Some(hwnd), None, true);
     }
+
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: 见函数文档。
+    unsafe {
+        (*state).dpi = dpi;
+        let width = client_width(hwnd);
+        layout_entries(dpi, width, &mut (*state).entries);
+        apply_thumbnails(&(*state).entries);
+    }
+}
+
+/// 按顺序纵向排列缩略图，每项高度按源窗口宽高比计算。
+fn layout_entries(dpi: u32, width: i32, entries: &mut [Entry]) {
+    let padding = scaled(PADDING_DIP, dpi);
+    let gap = scaled(GAP_DIP, dpi);
+    let inner = (width - padding * 2).max(1);
+    let min_height = scaled(MIN_ITEM_DIP, dpi);
+    let max_height = scaled(MAX_ITEM_DIP, dpi);
+    let mut top = padding;
+
+    for entry in entries.iter_mut() {
+        let aspect = if entry.source.width() > 0 {
+            entry.source.height() as f64 / entry.source.width() as f64
+        } else {
+            FALLBACK_ASPECT
+        };
+        let height = ((inner as f64 * aspect) as i32).clamp(min_height, max_height);
+        entry.rect = RECT {
+            left: padding,
+            top,
+            right: padding + inner,
+            bottom: top + height,
+        };
+        top += height + gap;
+    }
+}
+
+fn apply_thumbnails(entries: &[Entry]) {
+    for entry in entries {
+        let props = DWM_THUMBNAIL_PROPERTIES {
+            dwFlags: DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY,
+            rcDestination: entry.rect,
+            opacity: 255,
+            fVisible: BOOL::from(true),
+            ..Default::default()
+        };
+        // SAFETY: 缩略图句柄由本窗口持有，属性结构在栈上有效。
+        unsafe {
+            let _ = DwmUpdateThumbnailProperties(entry.thumb, &props);
+        }
+    }
+}
+
+fn hit_test(entries: &[Entry], x: i32, y: i32) -> Option<isize> {
+    entries
+        .iter()
+        .find(|entry| {
+            x >= entry.rect.left
+                && x < entry.rect.right
+                && y >= entry.rect.top
+                && y < entry.rect.bottom
+        })
+        .map(|entry| entry.window)
+}
+
+fn scaled(value: i32, dpi: u32) -> i32 {
+    value * dpi as i32 / 96
 }
 
 fn scaled_width(dpi: u32) -> i32 {
-    (DEFAULT_WIDTH_DIP * dpi / 96) as i32
+    scaled(DEFAULT_WIDTH_DIP as i32, dpi)
+}
+
+fn client_width(hwnd: HWND) -> i32 {
+    let mut rect = RECT::default();
+    // SAFETY: 输出参数是本栈帧上的 RECT。
+    unsafe {
+        let _ = GetClientRect(hwnd, &mut rect);
+    }
+    rect.right - rect.left
 }
 
 /// 主显示器工作区（扣除任务栏）。拿不到时退化为整屏。
@@ -189,13 +380,16 @@ fn paint(hwnd: HWND) {
 
 /// 预览区窗口的消息处理。
 ///
-/// 安全前提：由系统按窗口过程签名调用，句柄属于本进程。
+/// 安全前提：由系统按窗口过程签名调用，句柄与用户数据都属于本进程。
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    // SAFETY: 用户数据由本进程写入，窗口存续期间保持有效。
+    let state = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut StripState;
+
     match msg {
         WM_PAINT => {
             paint(hwnd);
@@ -203,7 +397,22 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_ERASEBKGND => LRESULT(1),
         WM_DPICHANGED => {
-            relayout_window(hwnd);
+            // SAFETY: 状态指针由本进程维护。
+            unsafe {
+                relayout_window(hwnd, state);
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            if !state.is_null() {
+                // SAFETY: 状态指针由本进程维护，只在窗口存续期间使用。
+                let entries = unsafe { &(*state).entries };
+                if let Some(window) = hit_test(entries, x, y) {
+                    let _ = activate(window);
+                }
+            }
             LRESULT(0)
         }
         WM_DESTROY => {

@@ -8,6 +8,8 @@ repository.workspace = true
 description = "AirPane 的预览区窗口：DWM 缩略图与动画"
 
 [dependencies]
+airpane-core = { path = "../core" }
+airpane-platform-win = { path = "../platform-win" }
 windows.workspace = true
 
 [lints]
