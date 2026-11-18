@@ -2,7 +2,7 @@
 
 Windows 上的「台前调度」式窗口管理：当前窗口待在屏幕中间，其余窗口以缩略图常驻一侧，点击即切换。窗口位置固定可预期，减少 Alt+Tab 里逐个找窗口的成本。
 
-> **状态：M0 技术原型阶段。** 现在只在验证核心可行性（窗口枚举、事件同步、预览区、前台切换、动画路线），没有可用界面，行为与接口随时可能大幅变化，请勿日常使用。
+> **状态：M1 自用版开发中。** M0 已完成（窗口枚举、事件同步、预览区、前台切换、动画路线）；M1 正在做 Stage 布局、窗口状态持久化与崩溃恢复、模式切换。仍无可用设置界面，请勿日常使用。
 
 ## 规划中的能力
 
@@ -14,11 +14,13 @@ Windows 上的「台前调度」式窗口管理：当前窗口待在屏幕中间
 
 ## 当前进度
 
-M0：窗口枚举与过滤 → WinEvent 事件同步 → 可靠的前台切换 → 预览区与 DWM 缩略图 → 动画路线验证。
+M0 已完成：窗口枚举与过滤 → WinEvent 事件同步 → 可靠的前台切换 → 预览区与 DWM 缩略图 → 动画路线验证。
+
+M1 进行中：配置与日志 → 快照落盘与崩溃恢复 → Stage 布局与尺寸记忆 → 模式切换快捷键与工具区。
 
 路线与阶段见 [`docs/PRD.md`](docs/PRD.md)（第 9、11 节）；与 PRD 原文不一致的决策见 [`docs/DECISIONS.md`](docs/DECISIONS.md)。
 
-## 构建
+## 构建与诊断
 
 需要 Windows 10 22H2 / Windows 11 与 Rust stable（`x86_64-pc-windows-msvc`）。
 
@@ -27,7 +29,17 @@ cargo build --workspace
 cargo run --bin airpane
 ```
 
-M0 阶段的主程序只打印版本与快照格式版本，还没有界面。
+主程序目前只加载配置、初始化日志、处理崩溃残留的快照，还没有 Stage 布局与快捷键。配置文件与日志在 `%APPDATA%\AirPane\`。
+
+调试与验收示例：
+
+```powershell
+cargo run -p airpane-platform-win --example list_windows -- --all        # 窗口列表与每条排除原因
+cargo run -p airpane-platform-win --example snapshot_check               # 写快照并挪开窗口，验证启动恢复
+cargo run -p airpane-platform-win --example watch_events -- --seconds 30 # 事件同步一致性
+cargo run -p airpane-platform-win --example switch_check -- --rounds 200 # 前台切换成功率
+cargo run -p airpane-strip --example preview_strip -- --seconds 30       # 预览区 + 缩略图 + 点击切换
+```
 
 ## 文档
 

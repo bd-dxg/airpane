@@ -173,3 +173,17 @@
 - **决策**：`%APPDATA%\AirPane\` 下分四个文件：用户设置 `config.json`、崩溃恢复 `snapshot.json`、尺寸记忆 `window-sizes.json`、日志 `logs\airpane.log`。`APPDATA` 缺失时回退到可执行文件同级目录，保证便携运行也能留下文件。
 - **理由**：三类数据生命周期不同——配置由用户手改，快照每次进入 Stage 都要重写，尺寸记忆由程序自动学习。混在一个文件里会让「每次移动窗口都重写用户配置」这种荒谬的写入模式出现，也让损坏时无法只重置其中一类。快照损坏时不该丢掉用户设置，反之亦然。
 - **影响**：`airpane-platform-win::paths` 是唯一拼路径的地方；写快照不得触碰 `config.json`。
+
+## D-024 退出还原与崩溃恢复的语义
+
+- **日期**：2026-11-19
+- **决策**：正常退出（快捷键退出、`WM_CLOSE`、进程结束前）先把所有被本程序移动过的窗口还原到快照位置，再把快照标记为 `clean_exit = true`；启动时读到 `clean_exit == false` 的快照，按快照恢复窗口位置后清除快照。只有快照里 `ShowState::Normal` 的窗口参与恢复：最大化与最小化窗口不会被 Stage 搬动（D-026），没有位置可还原。
+- **理由**：AirPane 不在运行时，桌面上不应该存在形变过的窗口。同时，「未清理的快照」是崩溃与强杀的唯一信号，比在别处维护一个「上次是否正常退出」的独立标记更不容易失效。
+- **影响**：`core::snapshot` 的 `SnapshotFile` 增加 `clean_exit`，版本升到 2；`platform-win::snapshot_store` 负责读写的原子性；`app::recovery` 是唯一的恢复入口。
+
+## D-030 位置与尺寸统一使用 DWM 可见边界
+
+- **日期**：2026-11-19
+- **决策**：项目内所有窗口位置与尺寸计算（枚举结果、快照、舞台区居中、移动目标）统一使用 `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)`，拿不到时才回退 `GetWindowRect`。`SetWindowPos` 接受的是含阴影的外框，由 `platform-win::placement::move_window` 内部做一次补偿。
+- **理由**：手工验证时发现，把 `GetWindowRect` 的结果当作「可见边界」再交给 `move_window` 补偿，会导致窗口每移动一次就膨胀一圈 —— 微信窗口从 1053×992 变成 1147×1079，因为 Qt 窗口的阴影外扩接近 50px。两处使用不同坐标系是这类 bug 的唯一来源，所以只允许一种语义。
+- **影响**：`platform-win::window::extended_frame_bounds` 成为唯一的边界读取入口；`WindowInfo::rect` 与快照里的 `rect` 语义随之变为可见边界；`move_window` 的入参必须是同一语义的矩形。

@@ -25,6 +25,7 @@ cargo run --bin airpane                                   # 主程序（当前�
 
 ```powershell
 cargo run -p airpane-platform-win --example list_windows -- --all        # 窗口列表 + 每条被排除的原因
+cargo run -p airpane-platform-win --example snapshot_check               # 写快照并挪开窗口，验证启动恢复
 cargo run -p airpane-platform-win --example watch_events -- --seconds 30 # 事件同步一致性，0 不一致才退出码 0
 cargo run -p airpane-platform-win --example switch_check -- --rounds 200 # 前台切换成功率，低于 99% 退出码 1
 cargo run -p airpane-strip --example preview_strip -- --seconds 30       # 预览区 + 缩略图 + 点击切换
@@ -77,6 +78,8 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 
 ## 当前状态
 
-- M0（T0.1–T0.6）已全部完成并合并，停在停点 B，等用户确认后才进入 M1。
+- M0（T0.1–T0.6）已全部完成并合并。
+- M1（T1.1–T1.8）进行中：配置与日志、快照与崩溃恢复已合并；Stage 布局、尺寸记忆、快捷键与工具区尚未开始。
+- 主程序目前只加载配置、初始化日志、处理崩溃残留的快照，还没有快捷键、预览区与 Stage 布局。
 - M1 范围见 `docs/PRD.md` 第 11.4 节；已知缺口见 `docs/test-report-M0.md` 第 3 节。
-- 开工前建议先读 `docs/DECISIONS.md`，它是与 PRD 冲突时的唯一真相源。
+- 开工前建议先读 `docs/DECISIONS.md`，它是与 PRD 冲突时的唯一真相源；其中 D-030 规定位置与尺寸统一使用 DWM 可见边界，写窗口相关代码前必读。

@@ -4,20 +4,22 @@
 //! 返回可被 AirPane 管理的窗口列表。
 
 use airpane_core::registry::{TrackedWindow, WindowRegistry};
-use airpane_core::snapshot::Rect;
+use airpane_core::snapshot::{Rect, ShowState};
 use airpane_core::window::{RejectReason, WindowFacts, classify};
 use core::ffi::c_void;
 use std::path::Path;
 
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
-use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
+use windows::Win32::Graphics::Dwm::{
+    DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute,
+};
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumChildWindows, EnumWindows, GA_ROOT, GW_OWNER, GWL_EXSTYLE, GetAncestor, GetClassNameW,
     GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
-    IsWindow, IsWindowVisible, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    IsIconic, IsWindow, IsWindowVisible, IsZoomed, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 use windows::core::{BOOL, PWSTR};
 
@@ -43,6 +45,48 @@ impl WindowInfo {
     /// 是否可被 AirPane 管理。
     pub fn is_managed(&self) -> bool {
         self.verdict.is_ok()
+    }
+}
+
+/// 读取窗口的可见边界（不含 DWM 在窗口外扩的阴影）。
+///
+/// Win11 起 `GetWindowRect` 返回的外框比看得见的窗口大一圈阴影，直接按它摆位会让
+/// 窗口看起来偏内。`DWMWA_EXTENDED_FRAME_BOUNDS` 才是用户眼里的边界，项目内所有
+/// 位置与尺寸计算都以它为准。
+pub fn extended_frame_bounds(hwnd: isize) -> Option<Rect> {
+    let window = HWND(hwnd as *mut c_void);
+    let mut rect = windows::Win32::Foundation::RECT::default();
+    // SAFETY: 输出缓冲是本栈帧上的 `RECT`，大小如实传入；句柄无效时返回错误。
+    let result = unsafe {
+        DwmGetWindowAttribute(
+            window,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut rect as *mut windows::Win32::Foundation::RECT as *mut c_void,
+            size_of::<windows::Win32::Foundation::RECT>() as u32,
+        )
+    };
+    result.is_ok().then_some(Rect {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+    })
+}
+
+/// 读取窗口的显示状态。句柄失效时按普通状态处理。
+pub fn show_state(hwnd: isize) -> ShowState {
+    if !is_window(hwnd) {
+        return ShowState::Normal;
+    }
+    let window = HWND(hwnd as *mut c_void);
+    // SAFETY: 只读查询，对任意句柄安全。
+    let (iconic, zoomed) = unsafe { (IsIconic(window).as_bool(), IsZoomed(window).as_bool()) };
+    if iconic {
+        ShowState::Minimized
+    } else if zoomed {
+        ShowState::Maximized
+    } else {
+        ShowState::Normal
     }
 }
 
@@ -277,6 +321,10 @@ fn window_title(hwnd: HWND) -> String {
 }
 
 fn window_rect(hwnd: HWND) -> Rect {
+    // 优先用 DWM 的可见边界，它才是用户看到的矩形；摆位与快照都以此为准。
+    if let Some(rect) = extended_frame_bounds(hwnd.0 as isize) {
+        return rect;
+    }
     let mut rect = windows::Win32::Foundation::RECT::default();
     // SAFETY: 输出参数是本栈帧上的 `RECT`。
     if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
