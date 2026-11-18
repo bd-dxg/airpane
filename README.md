@@ -18,6 +18,8 @@ M0 已完成：窗口枚举与过滤 → WinEvent 事件同步 → 可靠的前�
 
 M1 进行中：配置与日志 → 快照落盘与崩溃恢复 → Stage 布局与尺寸记忆 → 模式切换快捷键与工具区。
 
+现在跑 `cargo run --bin airpane` 就能看到 Stage 模式：预览区贴左，前台窗口占满右侧舞台区，其余窗口留在原位；退出时窗口自动还原。模式切换快捷键、底部工具区与最小化窗口的交互在下一个 PR 接入。
+
 路线与阶段见 [`docs/PRD.md`](docs/PRD.md)（第 9、11 节）；与 PRD 原文不一致的决策见 [`docs/DECISIONS.md`](docs/DECISIONS.md)。
 
 ## 构建与诊断
@@ -29,7 +31,7 @@ cargo build --workspace
 cargo run --bin airpane
 ```
 
-主程序目前只加载配置、初始化日志、处理崩溃残留的快照，还没有 Stage 布局与快捷键。配置文件与日志在 `%APPDATA%\AirPane\`。
+主程序启动后直接进入 Stage 模式。配置文件与日志在 `%APPDATA%\AirPane\`。
 
 调试与验收示例：
 

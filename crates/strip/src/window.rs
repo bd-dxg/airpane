@@ -4,8 +4,10 @@ use core::ffi::c_void;
 use core::fmt;
 use std::collections::HashMap;
 
+use airpane_core::config::{DEFAULT_STRIP_WIDTH_DIP, effective_strip_width};
 use airpane_core::snapshot::Rect;
 use airpane_platform_win::foreground::activate;
+use airpane_platform_win::monitor::primary_work_area;
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWM_THUMBNAIL_PROPERTIES, DWM_TNP_OPACITY, DWM_TNP_RECTDESTINATION, DWM_TNP_VISIBLE,
@@ -21,16 +23,15 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
-    GetMessageW, GetSystemMetrics, GetWindowLongPtrW, HWND_TOPMOST, MSG, PostQuitMessage,
-    RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos, SystemParametersInfoW,
-    TranslateMessage, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_PAINT,
-    WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    GetMessageW, GetWindowLongPtrW, HWND_TOPMOST, MSG, PostQuitMessage, RegisterClassW,
+    SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, TranslateMessage, WM_DESTROY,
+    WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::{BOOL, HSTRING, w};
 
-/// 预览区的逻辑宽度（DIP）。PRD 4.5 的默认值。
-pub const DEFAULT_WIDTH_DIP: u32 = 200;
+/// 预览区默认的逻辑宽度（DIP），PRD 4.5。实际生效值由 [`physical_width`] 计算。
+pub const DEFAULT_WIDTH_DIP: u32 = DEFAULT_STRIP_WIDTH_DIP;
 /// 预览区背景色（深灰，M0 阶段的降级视觉）。
 const BACKGROUND: COLORREF = COLORREF(0x0020_2020);
 
@@ -72,6 +73,8 @@ pub struct Strip {
 /// 窗口过程需要访问的状态。
 struct StripState {
     dpi: u32,
+    /// 配置里的预览区宽度（DIP）。
+    width_dip: u32,
     entries: Vec<Entry>,
 }
 
@@ -88,8 +91,9 @@ struct Entry {
 impl Strip {
     /// 创建预览区窗口并贴到主显示器工作区的左侧。
     ///
+    /// `width_dip` 是配置里的设定值，实际宽度会按 DPI 与可用宽度收敛。
     /// 调用前应先执行 [`enable_per_monitor_v2`]，否则窗口会按系统缩放被拉伸。
-    pub fn create() -> Result<Self, StripError> {
+    pub fn create(width_dip: u32) -> Result<Self, StripError> {
         // SAFETY: 只查询本模块句柄。
         let instance = unsafe { GetModuleHandleW(None) }
             .map_err(|err| StripError(format!("GetModuleHandleW 失败: {err}")))?;
@@ -106,6 +110,7 @@ impl Strip {
         }
 
         let work = work_area();
+        let initial_width = physical_width(width_dip, 96, work.right - work.left);
         // SAFETY: 创建本程序自己的窗口，父窗口与菜单为空。
         let hwnd = unsafe {
             CreateWindowExW(
@@ -115,7 +120,7 @@ impl Strip {
                 WS_POPUP | WS_VISIBLE,
                 work.left,
                 work.top,
-                scaled_width(96),
+                initial_width,
                 work.bottom - work.top,
                 None,
                 None,
@@ -129,6 +134,7 @@ impl Strip {
         let dpi = unsafe { GetDpiForWindow(hwnd) };
         let state = Box::into_raw(Box::new(StripState {
             dpi: if dpi == 0 { 96 } else { dpi },
+            width_dip,
             entries: Vec::new(),
         }));
         // SAFETY: 把状态指针挂到本窗口，窗口过程只在使用期间解引用。
@@ -143,6 +149,11 @@ impl Strip {
 
     pub fn hwnd(&self) -> isize {
         self.hwnd.0 as isize
+    }
+
+    /// 预览区的实际宽度（物理像素，已按 DPI 与可用宽度收敛）。
+    pub fn width(&self) -> i32 {
+        client_width(self.hwnd)
     }
 
     /// 同步要展示的窗口列表，顺序即最近使用顺序（最前的最靠上）。
@@ -246,6 +257,13 @@ unsafe fn relayout_window(hwnd: HWND, state: *mut StripState) {
     // SAFETY: 只查询本窗口所在显示器的 DPI。
     let dpi = unsafe { GetDpiForWindow(hwnd) };
     let dpi = if dpi == 0 { 96 } else { dpi };
+    let width_dip = if state.is_null() {
+        DEFAULT_WIDTH_DIP
+    } else {
+        // SAFETY: 见函数文档，`state` 只在窗口存续期间使用。
+        unsafe { (*state).width_dip }
+    };
+    let width = physical_width(width_dip, dpi, work.right - work.left);
 
     // SAFETY: 只移动本程序自己的窗口，并保持置顶与不抢焦点。
     unsafe {
@@ -254,7 +272,7 @@ unsafe fn relayout_window(hwnd: HWND, state: *mut StripState) {
             Some(HWND_TOPMOST),
             work.left,
             work.top,
-            scaled_width(dpi),
+            width,
             work.bottom - work.top,
             SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
@@ -331,8 +349,12 @@ fn scaled(value: i32, dpi: u32) -> i32 {
     value * dpi as i32 / 96
 }
 
-fn scaled_width(dpi: u32) -> i32 {
-    scaled(DEFAULT_WIDTH_DIP as i32, dpi)
+/// 把配置里的 DIP 宽度换算成物理像素，并应用 D-012 的钳制规则。
+fn physical_width(width_dip: u32, dpi: u32, available_px: i32) -> i32 {
+    let dpi = dpi.max(1) as i32;
+    let available_dip = available_px * 96 / dpi;
+    let effective = effective_strip_width(width_dip, available_dip);
+    effective as i32 * dpi / 96
 }
 
 fn client_width(hwnd: HWND) -> i32 {
@@ -344,26 +366,15 @@ fn client_width(hwnd: HWND) -> i32 {
     rect.right - rect.left
 }
 
-/// 主显示器工作区（扣除任务栏）。拿不到时退化为整屏。
+/// 主显示器工作区（扣除任务栏）。
 fn work_area() -> RECT {
-    let mut rect = RECT::default();
-    // SAFETY: 输出参数是本栈帧上的 RECT，类型与大小一致。
-    let ok = unsafe {
-        SystemParametersInfoW(
-            SPI_GETWORKAREA,
-            0,
-            Some(&mut rect as *mut RECT as *mut c_void),
-            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-        )
-    };
-    if ok.is_err() {
-        // SAFETY: 无参数查询主屏尺寸。
-        unsafe {
-            rect.right = GetSystemMetrics(SM_CXSCREEN);
-            rect.bottom = GetSystemMetrics(SM_CYSCREEN);
-        }
+    let area = primary_work_area();
+    RECT {
+        left: area.left,
+        top: area.top,
+        right: area.right,
+        bottom: area.bottom,
     }
-    rect
 }
 
 fn paint(hwnd: HWND) {

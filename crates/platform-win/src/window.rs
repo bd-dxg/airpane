@@ -147,6 +147,7 @@ fn inspect(hwnd: HWND) -> Option<WindowInfo> {
     let host_pid = window_pid(hwnd);
     let class_name = window_class_name(hwnd);
     let pid = resolve_app_pid(hwnd, &class_name, host_pid);
+    let process_name = query_process_name(pid);
     let facts = WindowFacts {
         visible: is_visible(hwnd),
         tool_window: has_ex_style(hwnd, WS_EX_TOOLWINDOW.0 as isize),
@@ -154,6 +155,7 @@ fn inspect(hwnd: HWND) -> Option<WindowInfo> {
         owned: has_owner(hwnd),
         cloaked: is_cloaked(hwnd),
         class_name: class_name.clone(),
+        process_name: process_name.clone(),
         top_level: is_top_level(hwnd),
         own_process: host_pid == std::process::id(),
     };
@@ -162,7 +164,7 @@ fn inspect(hwnd: HWND) -> Option<WindowInfo> {
     Some(WindowInfo {
         hwnd: hwnd.0 as isize,
         pid,
-        process_name: query_process_name(pid),
+        process_name,
         class_name,
         title: window_title(hwnd),
         rect: window_rect(hwnd),

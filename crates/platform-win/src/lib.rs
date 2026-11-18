@@ -6,8 +6,12 @@
 pub mod config_io;
 pub mod events;
 pub mod foreground;
+pub mod json_io;
 pub mod logging;
+pub mod message_loop;
+pub mod monitor;
 pub mod paths;
 pub mod placement;
+pub mod size_store;
 pub mod snapshot_store;
 pub mod window;

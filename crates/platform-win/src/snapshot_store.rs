@@ -9,7 +9,7 @@ use std::path::Path;
 
 use airpane_core::snapshot::{SNAPSHOT_VERSION, SnapshotFile};
 
-use crate::{log_debug, log_warn};
+use crate::{json_io, log_debug, log_warn};
 
 /// 读取快照。文件不存在、损坏或版本不符时返回 `None`。
 pub fn read(path: &Path) -> Option<SnapshotFile> {
@@ -42,14 +42,7 @@ pub fn read(path: &Path) -> Option<SnapshotFile> {
 
 /// 原子写入快照。
 pub fn write(path: &Path, snapshot: &SnapshotFile) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let text = serde_json::to_string_pretty(snapshot).map_err(io::Error::other)?;
-    let temp = path.with_extension("json.tmp");
-    fs::write(&temp, text)?;
-    // Windows 上 `fs::rename` 使用 MoveFileEx(MOVEFILE_REPLACE_EXISTING)，可直接覆盖。
-    fs::rename(&temp, path)
+    json_io::write_atomic(path, snapshot)
 }
 
 /// 删除快照文件，不存在时不算错误。
