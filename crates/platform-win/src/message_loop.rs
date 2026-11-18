@@ -5,7 +5,8 @@
 
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, KillTimer, MSG, SetTimer, TranslateMessage, WM_APP, WM_TIMER,
+    DispatchMessageW, GetMessageW, KillTimer, MSG, SetTimer, TranslateMessage, WM_APP, WM_HOTKEY,
+    WM_TIMER,
 };
 
 use crate::events;
@@ -13,13 +14,15 @@ use crate::events;
 /// 事件监听线程用来唤醒主线程的消息号。
 pub const WAKEUP_MESSAGE: u32 = WM_APP + 1;
 
-/// 消息循环需要调用方处理的两种事件。
+/// 消息循环需要调用方处理的三种事件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoopMessage {
     /// 事件线程投递了新事件，调用方应当把 channel 里的东西取空。
     Wakeup,
     /// 周期定时器触发了。
     Timer,
+    /// 全局快捷键触发了，携带注册时的 id。
+    Hotkey(i32),
 }
 
 /// 在调用线程上运行消息循环，直到收到 `WM_QUIT`。
@@ -44,6 +47,7 @@ pub fn run(timer_ms: u32, mut on_message: impl FnMut(LoopMessage)) {
         match msg.message {
             WAKEUP_MESSAGE => on_message(LoopMessage::Wakeup),
             WM_TIMER if timer != 0 && msg.wParam.0 == timer => on_message(LoopMessage::Timer),
+            WM_HOTKEY => on_message(LoopMessage::Hotkey(msg.wParam.0 as i32)),
             _ => {
                 // SAFETY: 消息已由 `GetMessageW` 填充。
                 unsafe {

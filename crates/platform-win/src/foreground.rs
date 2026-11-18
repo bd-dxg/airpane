@@ -12,7 +12,7 @@ use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, SW_RESTORE,
-    SetForegroundWindow, ShowWindowAsync,
+    SetForegroundWindow, ShowWindow, ShowWindowAsync,
 };
 
 use crate::window::is_window;
@@ -39,6 +39,23 @@ impl fmt::Display for ActivateError {
 pub fn foreground_window() -> isize {
     // SAFETY: 无参数只读查询。
     unsafe { GetForegroundWindow().0 as isize }
+}
+
+/// 同步还原最小化窗口，返回它是否已经不再是图标状态。
+///
+/// 与 [`activate`] 里的 `ShowWindowAsync` 不同，这个调用会等窗口完成还原。需要用
+/// 同步版本时，是因为调用方紧接着就要读窗口的真实矩形（异步还原会读到旧值）。
+pub fn restore(hwnd: isize) -> bool {
+    if !is_window(hwnd) {
+        return false;
+    }
+    let target = HWND(hwnd as *mut c_void);
+    // SAFETY: 只对目标窗口调 `SW_RESTORE`，不抢焦点、不改 Z 序。
+    unsafe {
+        let _ = ShowWindow(target, SW_RESTORE);
+    }
+    // SAFETY: 只读查询。
+    !unsafe { IsIconic(target) }.as_bool()
 }
 
 /// 把目标窗口切到前台并获取焦点。已在前台时直接返回成功。

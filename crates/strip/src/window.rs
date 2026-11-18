@@ -3,9 +3,11 @@
 use core::ffi::c_void;
 use core::fmt;
 use std::collections::HashMap;
+use std::sync::mpsc::Sender;
 
 use airpane_core::config::{DEFAULT_STRIP_WIDTH_DIP, effective_strip_width};
 use airpane_core::snapshot::Rect;
+use airpane_platform_win::events;
 use airpane_platform_win::foreground::activate;
 use airpane_platform_win::monitor::primary_work_area;
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -14,8 +16,9 @@ use windows::Win32::Graphics::Dwm::{
     DwmRegisterThumbnail, DwmUnregisterThumbnail, DwmUpdateThumbnailProperties,
 };
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, HBRUSH, InvalidateRect,
-    PAINTSTRUCT,
+    BeginPaint, CreateSolidBrush, DEFAULT_GUI_FONT, DT_CENTER, DT_SINGLELINE, DT_VCENTER,
+    DeleteObject, DrawTextW, EndPaint, FillRect, GetStockObject, HBRUSH, InvalidateRect,
+    PAINTSTRUCT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
@@ -23,10 +26,10 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
-    GetMessageW, GetWindowLongPtrW, HWND_TOPMOST, MSG, PostQuitMessage, RegisterClassW,
-    SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, TranslateMessage, WM_DESTROY,
-    WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    GetMessageW, GetWindowLongPtrW, HWND_TOPMOST, MSG, PostQuitMessage, RegisterClassW, SW_HIDE,
+    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    TranslateMessage, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_MOUSEWHEEL,
+    WM_PAINT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::{BOOL, HSTRING, w};
 
@@ -34,6 +37,15 @@ use windows::core::{BOOL, HSTRING, w};
 pub const DEFAULT_WIDTH_DIP: u32 = DEFAULT_STRIP_WIDTH_DIP;
 /// 预览区背景色（深灰，M0 阶段的降级视觉）。
 const BACKGROUND: COLORREF = COLORREF(0x0020_2020);
+/// 底部工具区背景色，比列表区域略亮。
+const TOOLBAR_BACKGROUND: COLORREF = COLORREF(0x0032_3232);
+/// 工具区文字颜色。
+const TEXT_COLOR: COLORREF = COLORREF(0x00E0_E0E0);
+
+/// 底部工具区的高度（DIP）。
+const TOOLBAR_HEIGHT_DIP: i32 = 40;
+/// 工具区两个按钮的文字。M1 硬编码，M3 引入多语言资源表时替换（D-033）。
+const TOOLBAR_LABELS: [&str; 2] = ["设置", "桌面"];
 
 // 布局常量，单位都是 DIP。
 const PADDING_DIP: i32 = 8;
@@ -51,6 +63,15 @@ pub struct StripItem {
     pub window: isize,
     /// 源窗口的矩形，用于计算缩略图的宽高比。
     pub rect: Rect,
+}
+
+/// 预览区发出的动作。只有工具区按钮走这里；缩略图点击直接调前台切换。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StripAction {
+    /// 切回普通桌面 / 重新进入 Stage 模式。
+    ToggleMode,
+    /// 打开设置面板（M1 只弹提示，M3 接真正的面板）。
+    OpenSettings,
 }
 
 /// 预览区窗口的创建错误。
@@ -75,7 +96,11 @@ struct StripState {
     dpi: u32,
     /// 配置里的预览区宽度（DIP）。
     width_dip: u32,
+    /// 缩略图列表已滚动的距离（物理像素）。
+    scroll: i32,
     entries: Vec<Entry>,
+    /// 工具区动作的出口。
+    actions: Sender<StripAction>,
 }
 
 struct Entry {
@@ -92,8 +117,9 @@ impl Strip {
     /// 创建预览区窗口并贴到主显示器工作区的左侧。
     ///
     /// `width_dip` 是配置里的设定值，实际宽度会按 DPI 与可用宽度收敛。
+    /// 工具区按钮的点击通过 `actions` 交给调用方。
     /// 调用前应先执行 [`enable_per_monitor_v2`]，否则窗口会按系统缩放被拉伸。
-    pub fn create(width_dip: u32) -> Result<Self, StripError> {
+    pub fn create(width_dip: u32, actions: Sender<StripAction>) -> Result<Self, StripError> {
         // SAFETY: 只查询本模块句柄。
         let instance = unsafe { GetModuleHandleW(None) }
             .map_err(|err| StripError(format!("GetModuleHandleW 失败: {err}")))?;
@@ -135,7 +161,9 @@ impl Strip {
         let state = Box::into_raw(Box::new(StripState {
             dpi: if dpi == 0 { 96 } else { dpi },
             width_dip,
+            scroll: 0,
             entries: Vec::new(),
+            actions,
         }));
         // SAFETY: 把状态指针挂到本窗口，窗口过程只在使用期间解引用。
         unsafe {
@@ -154,6 +182,14 @@ impl Strip {
     /// 预览区的实际宽度（物理像素，已按 DPI 与可用宽度收敛）。
     pub fn width(&self) -> i32 {
         client_width(self.hwnd)
+    }
+
+    /// 显示或隐藏预览区。隐藏时不抢焦点，也不改变 Z 序以外的东西。
+    pub fn set_visible(&self, visible: bool) {
+        // SAFETY: 只改变本程序自己窗口的可见性；`SW_SHOWNOACTIVATE` 不会抢焦点。
+        unsafe {
+            let _ = ShowWindow(self.hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
+        }
     }
 
     /// 同步要展示的窗口列表，顺序即最近使用顺序（最前的最靠上）。
@@ -201,8 +237,10 @@ impl Strip {
         }
 
         state.entries = next;
-        layout_entries(state.dpi, client_width(self.hwnd), &mut state.entries);
-        apply_thumbnails(&state.entries);
+        // SAFETY: `state` 由 `Strip::create` 分配，只在 `Strip` 存续期间使用。
+        unsafe {
+            apply_layout(self.hwnd, self.state);
+        }
         Ok(())
     }
 
@@ -285,28 +323,63 @@ unsafe fn relayout_window(hwnd: HWND, state: *mut StripState) {
     // SAFETY: 见函数文档。
     unsafe {
         (*state).dpi = dpi;
+        apply_layout(hwnd, state);
+    }
+}
+
+/// 按当前 DPI、客户区大小与滚动位置重新排列缩略图，并推送到 DWM。
+///
+/// 安全前提：`state` 要么为空，要么指向存活的 `StripState`。
+unsafe fn apply_layout(hwnd: HWND, state: *mut StripState) {
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: 见函数文档。
+    unsafe {
+        let dpi = (*state).dpi;
         let width = client_width(hwnd);
-        layout_entries(dpi, width, &mut (*state).entries);
+        let available = client_height(hwnd) - toolbar_height(dpi);
+        layout_entries(
+            dpi,
+            width,
+            available,
+            &mut (*state).scroll,
+            &mut (*state).entries,
+        );
         apply_thumbnails(&(*state).entries);
+        let _ = InvalidateRect(Some(hwnd), None, true);
     }
 }
 
 /// 按顺序纵向排列缩略图，每项高度按源窗口宽高比计算。
-fn layout_entries(dpi: u32, width: i32, entries: &mut [Entry]) {
+///
+/// `scroll` 会被钳制在 `0..=(内容总高 - 可用高)` 内。超出工具区的项仍然会写进
+/// `rect`，但会被窗口客户区裁掉。
+fn layout_entries(dpi: u32, width: i32, available: i32, scroll: &mut i32, entries: &mut [Entry]) {
     let padding = scaled(PADDING_DIP, dpi);
     let gap = scaled(GAP_DIP, dpi);
     let inner = (width - padding * 2).max(1);
     let min_height = scaled(MIN_ITEM_DIP, dpi);
     let max_height = scaled(MAX_ITEM_DIP, dpi);
-    let mut top = padding;
 
-    for entry in entries.iter_mut() {
+    let mut heights = Vec::with_capacity(entries.len());
+    let mut total = padding;
+    for entry in entries.iter() {
         let aspect = if entry.source.width() > 0 {
             entry.source.height() as f64 / entry.source.width() as f64
         } else {
             FALLBACK_ASPECT
         };
         let height = ((inner as f64 * aspect) as i32).clamp(min_height, max_height);
+        heights.push(height);
+        total += height + gap;
+    }
+
+    let max_scroll = (total - available).max(0);
+    *scroll = (*scroll).clamp(0, max_scroll);
+
+    let mut top = padding - *scroll;
+    for (entry, height) in entries.iter_mut().zip(heights) {
         entry.rect = RECT {
             left: padding,
             top,
@@ -345,6 +418,50 @@ fn hit_test(entries: &[Entry], x: i32, y: i32) -> Option<isize> {
         .map(|entry| entry.window)
 }
 
+/// 工具区高度（物理像素）。
+fn toolbar_height(dpi: u32) -> i32 {
+    scaled(TOOLBAR_HEIGHT_DIP, dpi)
+}
+
+/// 工具区本身占用的矩形，贴客户区底部。
+fn toolbar_rect(dpi: u32, width: i32, height: i32) -> RECT {
+    let bar = toolbar_height(dpi);
+    RECT {
+        left: 0,
+        top: height - bar,
+        right: width,
+        bottom: height,
+    }
+}
+
+/// 工具区里两个按钮的矩形。
+fn toolbar_buttons(dpi: u32, width: i32, height: i32) -> [RECT; 2] {
+    let bar = toolbar_rect(dpi, width, height);
+    let padding = scaled(PADDING_DIP, dpi);
+    let gap = scaled(GAP_DIP, dpi);
+    let inner = (width - padding * 2 - gap).max(2) / 2;
+    let top = bar.top + scaled(6, dpi);
+    let bottom = bar.bottom - scaled(6, dpi);
+    [
+        RECT {
+            left: padding,
+            top,
+            right: padding + inner,
+            bottom,
+        },
+        RECT {
+            left: padding + inner + gap,
+            top,
+            right: padding + inner + gap + inner,
+            bottom,
+        },
+    ]
+}
+
+fn contains(rect: &RECT, x: i32, y: i32) -> bool {
+    x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+}
+
 fn scaled(value: i32, dpi: u32) -> i32 {
     value * dpi as i32 / 96
 }
@@ -366,6 +483,15 @@ fn client_width(hwnd: HWND) -> i32 {
     rect.right - rect.left
 }
 
+fn client_height(hwnd: HWND) -> i32 {
+    let mut rect = RECT::default();
+    // SAFETY: 输出参数是本栈帧上的 RECT。
+    unsafe {
+        let _ = GetClientRect(hwnd, &mut rect);
+    }
+    rect.bottom - rect.top
+}
+
 /// 主显示器工作区（扣除任务栏）。
 fn work_area() -> RECT {
     let area = primary_work_area();
@@ -379,11 +505,42 @@ fn work_area() -> RECT {
 
 fn paint(hwnd: HWND) {
     let mut ps = PAINTSTRUCT::default();
-    // SAFETY: `ps` 是本栈帧上的 PAINTSTRUCT，BeginPaint/EndPaint 必须成对调用。
+    // SAFETY: `ps` 是本栈帧上的 PAINTSTRUCT，BeginPaint/EndPaint 必须成对调用；
+    // `DrawTextW` 的文本缓冲区在调用期间存活，矩形也是本栈帧上的局部变量。
     unsafe {
         let hdc = BeginPaint(hwnd, &mut ps);
         let brush: HBRUSH = CreateSolidBrush(BACKGROUND);
         FillRect(hdc, &ps.rcPaint, brush);
+
+        // SAFETY: 只查询本窗口 DPI。
+        let dpi = GetDpiForWindow(hwnd);
+        let dpi = if dpi == 0 { 96 } else { dpi };
+        let width = client_width(hwnd);
+        let height = client_height(hwnd);
+        let toolbar = toolbar_rect(dpi, width, height);
+        let toolbar_brush: HBRUSH = CreateSolidBrush(TOOLBAR_BACKGROUND);
+        FillRect(hdc, &toolbar, toolbar_brush);
+
+        let font = GetStockObject(DEFAULT_GUI_FONT);
+        let previous = SelectObject(hdc, font);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, TEXT_COLOR);
+
+        for (mut rect, label) in toolbar_buttons(dpi, width, height)
+            .into_iter()
+            .zip(TOOLBAR_LABELS)
+        {
+            let mut text: Vec<u16> = label.encode_utf16().collect();
+            DrawTextW(
+                hdc,
+                &mut text,
+                &mut rect as *mut RECT,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            );
+        }
+
+        SelectObject(hdc, previous);
+        let _ = DeleteObject(toolbar_brush.into());
         let _ = DeleteObject(brush.into());
         let _ = EndPaint(hwnd, &ps);
     }
@@ -419,9 +576,38 @@ unsafe extern "system" fn wnd_proc(
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
             if !state.is_null() {
                 // SAFETY: 状态指针由本进程维护，只在窗口存续期间使用。
-                let entries = unsafe { &(*state).entries };
-                if let Some(window) = hit_test(entries, x, y) {
+                let (actions, entries) = unsafe {
+                    let state = &*state;
+                    (state.actions.clone(), &state.entries)
+                };
+                let dpi = unsafe { (*state).dpi };
+                let buttons = toolbar_buttons(dpi, client_width(hwnd), client_height(hwnd));
+
+                if contains(&buttons[0], x, y) {
+                    let _ = actions.send(StripAction::OpenSettings);
+                    events::wake();
+                } else if contains(&buttons[1], x, y) {
+                    let _ = actions.send(StripAction::ToggleMode);
+                    events::wake();
+                } else if let Some(window) = hit_test(entries, x, y) {
                     let _ = activate(window);
+                }
+            }
+            LRESULT(0)
+        }
+        WM_MOUSEWHEEL => {
+            if !state.is_null() {
+                // SAFETY: 状态指针由本进程维护，只在窗口存续期间使用。
+                let dpi = unsafe { (*state).dpi };
+                // 滚轮增量在高 16 位，一格是 120。
+                let delta = ((wparam.0 >> 16) & 0xFFFF) as u16 as i16;
+                if delta != 0 {
+                    let step = scaled(60, dpi);
+                    // SAFETY: 同上。
+                    unsafe {
+                        (*state).scroll -= (delta as i32 / 120) * step;
+                        apply_layout(hwnd, state);
+                    }
                 }
             }
             LRESULT(0)

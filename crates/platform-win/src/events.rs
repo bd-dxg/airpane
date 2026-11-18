@@ -57,10 +57,16 @@ static WAKEUP_THREAD: AtomicU32 = AtomicU32::new(0);
 static WAKEUP_MESSAGE: AtomicU32 = AtomicU32::new(0);
 
 /// 设置事件线程唤醒主线程用的目标。
-///
 pub fn set_wakeup(thread_id: u32, message: u32) {
     WAKEUP_MESSAGE.store(message, Ordering::Relaxed);
     WAKEUP_THREAD.store(thread_id, Ordering::Relaxed);
+}
+
+/// 主动踢一下主线程。
+///
+/// 供窗口过程使用：处理完按钮点击后让主循环立刻回来取动作，不用等下一个定时器。
+pub fn wake() {
+    wake_up();
 }
 
 fn sink() -> &'static Mutex<Option<Sender<WindowEvent>>> {

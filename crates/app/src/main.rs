@@ -1,18 +1,22 @@
 //! AirPane 主程序入口。
 //!
-//! M1 阶段：加载配置与日志、处理崩溃残留的快照、在主线程跑预览区与 Stage 布局。
-//! 模式切换快捷键与底部工具区在下一个 PR 接入。
+//! M1：加载配置与日志、处理崩溃残留的快照、在主线程跑预览区、Stage 布局与模式切换。
 
 mod app;
 mod recovery;
 
 use std::process::ExitCode;
+use std::sync::mpsc::channel;
 
-use airpane_core::config::CONFIG_VERSION;
+use airpane_core::config::{CONFIG_VERSION, StartupMode};
 use airpane_platform_win::events::EventMonitor;
+use airpane_platform_win::hotkey::Hotkey;
 use airpane_platform_win::message_loop::{self, LoopMessage};
-use airpane_platform_win::{config_io, log_info, log_warn, logging, paths, size_store};
+use airpane_platform_win::{config_io, dialog, log_info, log_warn, logging, paths, size_store};
 use airpane_strip::window::{Strip, enable_per_monitor_v2};
+
+/// 模式切换快捷键的注册 id。
+const TOGGLE_MODE_HOTKEY_ID: i32 = 1;
 
 fn main() -> ExitCode {
     if let Err(err) = paths::ensure_app_dir() {
@@ -51,7 +55,9 @@ fn main() -> ExitCode {
     }
 
     enable_per_monitor_v2();
-    let mut strip = match Strip::create(config.strip.width_dip) {
+
+    let (action_tx, actions) = channel();
+    let mut strip = match Strip::create(config.strip.width_dip, action_tx) {
         Ok(strip) => strip,
         Err(err) => {
             log_warn!("创建预览区失败: {err}");
@@ -72,21 +78,56 @@ fn main() -> ExitCode {
         }
     };
 
-    app.enter_stage(&mut strip);
-    println!("AirPane {} — 已进入 Stage 模式", env!("CARGO_PKG_VERSION"));
+    let hotkey = match Hotkey::register(&config.hotkey.toggle_mode, TOGGLE_MODE_HOTKEY_ID) {
+        Ok(hotkey) => {
+            log_info!("模式切换快捷键：{}", config.hotkey.toggle_mode);
+            Some(hotkey)
+        }
+        Err(err) => {
+            log_warn!("{err}");
+            dialog::info(
+                "AirPane",
+                &format!(
+                    "{err}\n\n可以改 %APPDATA%\\AirPane\\config.json 里的 hotkey.toggle_mode，或者点预览区底部的「桌面」按钮切换模式。"
+                ),
+            );
+            None
+        }
+    };
+
+    // D-028：没有上次记录时默认进入 Stage 模式。
+    if config.startup.mode != StartupMode::Normal {
+        app.enter_stage(&mut strip);
+    }
+
+    println!(
+        "AirPane {} — {}",
+        env!("CARGO_PKG_VERSION"),
+        app.mode_name()
+    );
     println!("配置：{}", config_path.display());
     println!("日志：{}", log_path.display());
-    println!("按 Ctrl+C 退出；被移动的窗口会在退出时还原");
+    println!("模式切换：{}", config.hotkey.toggle_mode);
 
     message_loop::run(1000, |message| match message {
         LoopMessage::Wakeup => {
             while let Ok(event) = events.try_recv() {
                 app.on_event(event, &mut strip);
             }
+            while let Ok(action) = actions.try_recv() {
+                app.on_action(action, &mut strip);
+            }
         }
         LoopMessage::Timer => app.reconcile(&mut strip),
+        LoopMessage::Hotkey(id) => {
+            if id == TOGGLE_MODE_HOTKEY_ID {
+                app.toggle_mode(&mut strip);
+                println!("已切换到{}", app.mode_name());
+            }
+        }
     });
 
+    drop(hotkey);
     drop(monitor);
     // `app` 在这里析构，Drop 会把移动过的窗口还原并清掉快照。
     drop(app);
