@@ -1,0 +1,11 @@
+[package]
+name = "airpane-strip"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AirPane 的预览区窗口：DWM 缩略图与动画"
+
+[lints]
+workspace = true
