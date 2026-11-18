@@ -1,6 +1,9 @@
 //! AirPane 主程序入口。
 //!
-//! M1 阶段：加载配置、初始化日志。Stage 布局、模式切换与预览区在后续 PR 接入。
+//! M1 阶段：加载配置、初始化日志、处理崩溃残留的快照。Stage 布局与模式切换在
+//! 后续 PR 接入。
+
+mod recovery;
 
 use airpane_core::config::CONFIG_VERSION;
 use airpane_platform_win::{config_io, log_info, log_warn, logging, paths};
@@ -35,6 +38,8 @@ fn main() {
         );
     }
 
+    let recovered = recovery::recover_if_needed(&paths::snapshot_file());
+
     println!(
         "AirPane {} — M1 自用版（配置格式 v{}）",
         env!("CARGO_PKG_VERSION"),
@@ -45,4 +50,7 @@ fn main() {
     println!("预览区宽度：{} DIP（设定值）", config.strip.width_dip);
     println!("模式切换快捷键：{}", config.hotkey.toggle_mode);
     println!("启动模式：{:?}", config.startup.mode);
+    if recovered > 0 {
+        println!("崩溃恢复：已把 {recovered} 个窗口摆回快照记录的位置");
+    }
 }

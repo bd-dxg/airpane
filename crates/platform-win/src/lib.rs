@@ -8,4 +8,6 @@ pub mod events;
 pub mod foreground;
 pub mod logging;
 pub mod paths;
+pub mod placement;
+pub mod snapshot_store;
 pub mod window;
