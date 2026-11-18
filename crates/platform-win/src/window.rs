@@ -17,9 +17,10 @@ use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, EnumWindows, GA_ROOT, GW_OWNER, GWL_EXSTYLE, GetAncestor, GetClassNameW,
-    GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
-    IsIconic, IsWindow, IsWindowVisible, IsZoomed, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    EnumChildWindows, EnumWindows, GA_ROOT, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetAncestor,
+    GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, WS_EX_APPWINDOW,
+    WS_EX_TOOLWINDOW,
 };
 use windows::core::{BOOL, PWSTR};
 
@@ -88,6 +89,16 @@ pub fn show_state(hwnd: isize) -> ShowState {
     } else {
         ShowState::Normal
     }
+}
+
+/// 窗口是否带有指定的窗口样式位（如 `WS_CAPTION`、`WS_MINIMIZEBOX`）。
+pub fn has_window_style(hwnd: isize, style: i32) -> bool {
+    if !is_window(hwnd) {
+        return false;
+    }
+    // SAFETY: 只读查询，对任意句柄安全。
+    let value = unsafe { GetWindowLongPtrW(HWND(hwnd as *mut c_void), GWL_STYLE) };
+    (value as i32 & style) != 0
 }
 
 /// 读取窗口的类名。句柄失效时返回 `None`。
