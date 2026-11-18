@@ -111,6 +111,13 @@
 - **理由**：已有一款付费 macOS 应用叫 AirPane（`airpane.app`），但改名成本在 M4 之前可控（crate 名与横幅文字），不必在编码前阻塞。
 - **影响**：关闭 PRD 10 节的待确认项 1；M4 发布准备增加「名称终判」检查点。
 
+**2026-11-18 检索结果**：
+
+- 英文重名：`airpane.app` 是一款 macOS 的 AirPods 菜单栏应用（$7.99 买断），2026-11 仍在更新，GitHub 上有其 release 仓库。商品类别与本项目不同（音频工具 vs 窗口管理），商标直接冲突风险较低，但搜索会混淆。
+- GitHub：无同名热门项目（本项目 0 star，其余为 `airpanele`、`airpane-releases`）。
+- crates.io：`airpane` 与 `airpane-core` 均未被占用，后续可正常发布。
+- 结论：保留 AirPane；M4 前重点确认三件事——商标注册情况（第 9 类软件）、`airpane.dev` 等候选域名、发布页是否需要在标题里加限定词（例如「AirPane for Windows」）避免与 macOS 应用混淆。
+
 ## D-016 预览区模式开关按 P0 实现
 
 - **日期**：2026-11-18

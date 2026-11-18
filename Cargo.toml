@@ -5,6 +5,7 @@ members = [
     "crates/platform-win",
     "crates/strip",
     "crates/app",
+    "prototypes/anim",
 ]
 
 [workspace.package]
