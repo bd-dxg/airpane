@@ -4,4 +4,5 @@
 //! 每处 `unsafe` 块前必须写明安全前提。
 
 pub mod events;
+pub mod foreground;
 pub mod window;
