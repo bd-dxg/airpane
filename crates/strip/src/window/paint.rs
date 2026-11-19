@@ -1,7 +1,10 @@
-//! 预览区的 GDI 绘制：背景、底部工具区，以及每一项的信息条（图标 + 标题）。
+//! 预览区的 GDI 绘制：背景、底部工具区，以及每一项的图标条。
+//!
+//! 配色跟随系统浅色/深色主题（D-054）：换主题只换 [`Palette`]，绘制代码不变。
 
 use core::ffi::c_void;
 
+use airpane_platform_win::theme::ColorScheme;
 use windows::Win32::Foundation::{COLORREF, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DEFAULT_GUI_FONT, DT_CENTER, DT_SINGLELINE, DT_VCENTER,
@@ -17,26 +20,59 @@ use super::layout::{
 };
 use super::state::StripState;
 
-/// 预览区背景色（深灰，M0 阶段的降级视觉）。
-const BACKGROUND: COLORREF = COLORREF(0x0020_2020);
-/// 底部工具区背景色，比列表区域略亮。
-const TOOLBAR_BACKGROUND: COLORREF = COLORREF(0x0032_3232);
-/// 缩略图下方图标条的背景色，在列表背景上留出一条能分辨的分隔。
-const ICON_BAND_BACKGROUND: COLORREF = COLORREF(0x002B_2B2B);
-/// 悬停项的图标条背景，比普通项略亮。
-const HOVER_BAND_BACKGROUND: COLORREF = COLORREF(0x0034_3434);
-/// 当前在舞台区的项：图标条最亮，配合上沿强调条（D-051）。
-const ACTIVE_BAND_BACKGROUND: COLORREF = COLORREF(0x003C_3C3C);
-/// 拖拽指示线的厚度由 `layout::drop_line` 决定，这里只需强调色。
-const ACCENT: COLORREF = COLORREF(0x00FF_A050);
-/// 活跃项强调条的厚度（DIP）。
+/// 活跃项强调条与拖拽指示线的厚度（DIP）。
 const ACCENT_DIP: i32 = 3;
-/// 工具区与图标的文字颜色。
-const TEXT_COLOR: COLORREF = COLORREF(0x00E0_E0E0);
 /// 工具区两个按钮的文字。M1 硬编码，M3 引入多语言资源表时替换（D-033）。
 const TOOLBAR_LABELS: [&str; 2] = ["设置", "桌面"];
 
-/// 绘制背景、工具区，以及每一项的图标条与悬停高亮。
+/// 一整套配色。`COLORREF` 是 `0x00BBGGRR`，注意蓝红顺序。
+pub(super) struct Palette {
+    /// 列表背景。
+    background: COLORREF,
+    /// 图标条背景。
+    band: COLORREF,
+    /// 悬停项的图标条。
+    hover_band: COLORREF,
+    /// 当前在舞台区的项。
+    active_band: COLORREF,
+    /// 底部工具区。
+    toolbar: COLORREF,
+    /// 工具区文字。
+    text: COLORREF,
+    /// 活跃强调条与拖拽指示线。
+    accent: COLORREF,
+}
+
+/// 深色配色（M1 原有的一套）。
+const DARK: Palette = Palette {
+    background: COLORREF(0x0020_2020),
+    band: COLORREF(0x002B_2B2B),
+    hover_band: COLORREF(0x0034_3434),
+    active_band: COLORREF(0x003C_3C3C),
+    toolbar: COLORREF(0x0032_3232),
+    text: COLORREF(0x00E0_E0E0),
+    accent: COLORREF(0x00FF_A050),
+};
+
+/// 浅色配色：中性灰底 + 深色文字，避免在浅色主题下出现一整块黑边。
+const LIGHT: Palette = Palette {
+    background: COLORREF(0x00F3_F3F3),
+    band: COLORREF(0x00E6_E6E6),
+    hover_band: COLORREF(0x00DC_DCDC),
+    active_band: COLORREF(0x00D2_D2D2),
+    toolbar: COLORREF(0x00EA_EAEA),
+    text: COLORREF(0x001F_1F1F),
+    accent: COLORREF(0x00EB_6F1F),
+};
+
+pub(super) fn palette(scheme: ColorScheme) -> &'static Palette {
+    match scheme {
+        ColorScheme::Light => &LIGHT,
+        ColorScheme::Dark => &DARK,
+    }
+}
+
+/// 绘制背景、工具区，以及每一项的图标条与高亮。
 ///
 /// 安全前提：`state` 要么为空，要么指向存活的 `StripState`。
 pub(super) fn paint(hwnd: HWND, state: *mut StripState) {
@@ -45,7 +81,13 @@ pub(super) fn paint(hwnd: HWND, state: *mut StripState) {
     // `DrawTextW` 的文本缓冲区在调用期间存活，矩形也是本栈帧上的局部变量。
     unsafe {
         let hdc = BeginPaint(hwnd, &mut ps);
-        let brush: HBRUSH = CreateSolidBrush(BACKGROUND);
+        // SAFETY: 见函数文档，`state` 只在窗口存续期间使用。
+        let colors = palette(if state.is_null() {
+            ColorScheme::Dark
+        } else {
+            (*state).scheme
+        });
+        let brush: HBRUSH = CreateSolidBrush(colors.background);
         FillRect(hdc, &ps.rcPaint, brush);
 
         // SAFETY: 只查询本窗口 DPI。
@@ -54,13 +96,13 @@ pub(super) fn paint(hwnd: HWND, state: *mut StripState) {
         let width = client_width(hwnd);
         let height = client_height(hwnd);
         let toolbar = toolbar_rect(dpi, width, height);
-        let toolbar_brush: HBRUSH = CreateSolidBrush(TOOLBAR_BACKGROUND);
+        let toolbar_brush: HBRUSH = CreateSolidBrush(colors.toolbar);
         FillRect(hdc, &toolbar, toolbar_brush);
 
         let font = GetStockObject(DEFAULT_GUI_FONT);
         let previous = SelectObject(hdc, font);
         SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, TEXT_COLOR);
+        SetTextColor(hdc, colors.text);
 
         for (mut rect, label) in toolbar_buttons(dpi, width, height)
             .into_iter()
@@ -78,12 +120,11 @@ pub(super) fn paint(hwnd: HWND, state: *mut StripState) {
         // 图标条：不显示标题，只留一个 32 DIP 的应用图标（D-048）。没有图标的
         // 项留空，不画占位图形。活跃项与悬停项只改配色，不改变布局（D-049、D-051）。
         if !state.is_null() {
-            // SAFETY: 见函数文档，`state` 只在窗口存续期间使用。
             let state = &*state;
-            let band_brush: HBRUSH = CreateSolidBrush(ICON_BAND_BACKGROUND);
-            let hover_brush: HBRUSH = CreateSolidBrush(HOVER_BAND_BACKGROUND);
-            let active_brush: HBRUSH = CreateSolidBrush(ACTIVE_BAND_BACKGROUND);
-            let accent_brush: HBRUSH = CreateSolidBrush(ACCENT);
+            let band_brush: HBRUSH = CreateSolidBrush(colors.band);
+            let hover_brush: HBRUSH = CreateSolidBrush(colors.hover_band);
+            let active_brush: HBRUSH = CreateSolidBrush(colors.active_band);
+            let accent_brush: HBRUSH = CreateSolidBrush(colors.accent);
             let icon_size = scaled(ICON_DIP, dpi);
             let icon_inset = scaled(ICON_INSET_DIP, dpi);
             let accent_height = scaled(ACCENT_DIP, dpi);
@@ -130,12 +171,12 @@ pub(super) fn paint(hwnd: HWND, state: *mut StripState) {
             let _ = DeleteObject(hover_brush.into());
             let _ = DeleteObject(band_brush.into());
 
-            // 拖拽指示线：两像素的强调色，标出松手后的落点（D-053）。
+            // 拖拽指示线：标出松手后的落点（D-053）。
             if let Some(drag) = state.drag {
                 if drag.moved {
                     let gap = scaled(GAP_DIP, dpi);
                     if let Some(line) = drop_line(&state.entries, drag.target, gap) {
-                        let line_brush: HBRUSH = CreateSolidBrush(ACCENT);
+                        let line_brush: HBRUSH = CreateSolidBrush(colors.accent);
                         FillRect(hdc, &line, line_brush);
                         let _ = DeleteObject(line_brush.into());
                     }

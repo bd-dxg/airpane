@@ -5,6 +5,7 @@ use std::sync::mpsc::Sender;
 
 use airpane_core::snapshot::Rect;
 use airpane_platform_win::icon::{AppIcon, app_icon};
+use airpane_platform_win::theme::ColorScheme;
 use windows::Win32::Foundation::RECT;
 
 use super::StripAction;
@@ -20,6 +21,8 @@ pub(super) struct StripState {
     pub(super) hovered: Option<isize>,
     /// 是否已向系统注册过 `WM_MOUSELEAVE`，避免每次移动都重复注册。
     pub(super) tracking_leave: bool,
+    /// 当前系统主题，决定这套配色（D-054）。
+    pub(super) scheme: ColorScheme,
     /// 应用图标缓存，同一应用的多个窗口共用。
     pub(super) icons: IconCache,
     /// 当前正在拖拽的项（D-053）。

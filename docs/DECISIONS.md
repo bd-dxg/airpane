@@ -396,3 +396,27 @@
 - **影响**：新增 `core::strip_order`（纯逻辑 + 7 个单测）、`platform-win::strip_order_store`、`paths::strip_order_file`；`App::new` 改收 `AppPaths`；`App::reorder` / `flush_order`；`StripAction::Reorder`；`strip` 的 `Drag` 状态、`layout::drop_index` / `drop_line`、`WM_LBUTTONUP` / `WM_CAPTURECHANGED` 处理与 2px 强调色指示线。
 - **实测**：真实桌面拖动第二项到顶部 → `strip-order.json` 写入该键；重启后拖第二项→顶部，结果证明上次的顺序被正确加载；拖到自己身上不写盘、不改顺序。
 - **已知限制**：同一应用的同类窗口作为一组一起移动（无法单独排两个终端）；排序文件只增不减（已退出的应用、关闭多年的窗口仍在表里），文件很小但有洁癖可手动删；同一位置拖到下一个边界会被当作「原位」而不是重排（避免无意义的写盘）。
+
+## D-054 预览区跟随系统浅色/深色主题
+
+- **日期**：2026-11-19
+- **决策**：预览区配色改成两套（`paint::DARK` / `paint::LIGHT`），启动时读 `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme` 选一套；`WM_SETTINGCHANGE` 时重读并重绘，不同步就不动。读不到注册表时回退深色。
+- **理由**：用户反馈浅色主题下左侧一整块黑边很突兀（本机当前就是浅色模式）。跟随系统是 Windows 应用的默认期待，比新增一个配置项更少维护成本。
+- **影响**：新增 `platform-win::theme`（`SHGetValueW` 读注册表，`windows` feature 加 `Win32_System_Registry`）；`paint` 从常量改成 `Palette`，`StripState.scheme`。
+- **已知限制**：只认「应用模式」，不跟随自定义强调色；主题切换时只重绘本窗口，已画的缩略图由 DWM 实时重新合成，不需要额外处理。
+
+## D-055 隐藏预览区后催一层重绘（未复现闪帧，属缓解）
+
+- **日期**：2026-11-19
+- **决策**：隐藏预览区后对前台窗口发一次 `RedrawWindow(RDW_INVALIDATE | RDW_ALLCHILDREN)` 再 `DwmFlush()`，让被盖住的区域立刻重画。故意不用 `RDW_UPDATENOW` —— 那会同步给别的进程发 `WM_PAINT`，对方卡死时本线程跟着卡。
+- **理由**：用户反馈全屏视频隐藏预览区的一瞬能看到部分桌面。
+- **实测情况**：用一个黑色无边框全屏窗口 + 30ms 间隔截图采样（277 帧），开关这段代码各跑一遍，两遍都没采到桌面像素 —— 说明脚本化场景复现不了真实播放器的这一帧。因此这条是低风险缓解，**未证实有效**，需要在真实播放器下复验。
+- **影响**：新增 `platform-win::compose::redraw_now`；`App::update_strip_visibility` 在隐藏分支调用一次。
+- **后续**：如果真实场景仍会闪，下一步试 `SHQueryUserNotificationState` 提前隐藏（M2 的完整全屏判定），而不是继续在重绘上微调。
+
+## D-056 输入法使用期间某些窗口的缩略图会变黑（DWM 限制）
+
+- **日期**：2026-11-19
+- **决策**：不处理。`winc.exe` 在用输入法时预览区里的缩略图会整块变黑，输入结束后自行恢复；这是 DWM 在窗口表面切换（输入法候选窗口、硬件表面）期间的采样限制，M1 不做像素检测、不做降级占位。
+- **理由**：要检测“缩略图是不是黑的”只能自己截图采像素，既违背 PRD 11.3 第 5 条的精神（窗口画面只用于 DWM 缩略图实时显示），又会把开销从合成层搬到 CPU。而 M3 的 DirectComposition 自绘渲染会重新处理这一块。
+- **影响**：无代码改动；记入 AGENTS.md 的踩坑清单与 M1 测试报告的已知缺口。

@@ -149,6 +149,7 @@ impl Strip {
             scroll: 0,
             hovered: None,
             tracking_leave: false,
+            scheme: airpane_platform_win::theme::system_color_scheme(),
             drag: None,
             icons: IconCache::default(),
             entries: Vec::new(),
