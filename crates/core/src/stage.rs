@@ -194,4 +194,36 @@ mod tests {
         assert_eq!(strip.left, 48);
         assert_eq!(strip.right, work.right, "超过工作区时收到工作区宽度");
     }
+
+    #[test]
+    fn small_screen_still_fits_the_strip_and_stage() {
+        // 1024×768 的小屏 + 底部 40 高的任务栏：位置全部来自传入的工作区，
+        // 不含任何写死的分辨率。
+        let work = Rect {
+            left: 0,
+            top: 0,
+            right: 1024,
+            bottom: 728,
+        };
+        let strip = strip_rect(work, 200);
+        let stage = stage_rect(work, strip.width());
+        assert_eq!(
+            strip,
+            Rect {
+                left: 0,
+                top: 0,
+                right: 200,
+                bottom: 728
+            }
+        );
+        assert_eq!(
+            stage,
+            Rect {
+                left: 200,
+                top: 0,
+                right: 1024,
+                bottom: 728
+            }
+        );
+    }
 }
