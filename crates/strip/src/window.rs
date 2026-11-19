@@ -16,7 +16,7 @@ use std::sync::mpsc::Sender;
 
 use airpane_core::config::DEFAULT_STRIP_WIDTH_DIP;
 use airpane_core::snapshot::Rect;
-use windows::Win32::Foundation::{HINSTANCE, HWND, RECT};
+use windows::Win32::Foundation::{HINSTANCE, HWND};
 use windows::Win32::Graphics::Dwm::{DwmRegisterThumbnail, DwmUnregisterThumbnail};
 use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -123,7 +123,8 @@ impl Strip {
         }
 
         let work = work_area();
-        let initial_width = physical_width(width_dip, 96, work.right - work.left);
+        let initial_width = physical_width(width_dip, 96, work.width());
+        let initial = airpane_core::stage::strip_rect(work, initial_width);
         // SAFETY: 创建本程序自己的窗口，父窗口与菜单为空。
         let hwnd = unsafe {
             CreateWindowExW(
@@ -131,10 +132,10 @@ impl Strip {
                 CLASS_NAME,
                 &HSTRING::from("AirPane"),
                 WS_POPUP | WS_VISIBLE,
-                work.left,
-                work.top,
-                initial_width,
-                work.bottom - work.top,
+                initial.left,
+                initial.top,
+                initial.width(),
+                initial.height(),
                 None,
                 None,
                 Some(HINSTANCE(instance.0)),
@@ -152,7 +153,12 @@ impl Strip {
             hovered: None,
             tracking_leave: false,
             scheme: airpane_platform_win::theme::system_color_scheme(),
-            work: RECT::default(),
+            work: airpane_core::snapshot::Rect {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
             drag: None,
             icons: IconCache::default(),
             entries: Vec::new(),

@@ -24,7 +24,7 @@ pub(super) struct StripState {
     /// 当前系统主题，决定这套配色（D-054）。
     pub(super) scheme: ColorScheme,
     /// 上次布局时的工作区。任务栏换边/分辨率变化后用它判断要不要重排（D-058）。
-    pub(super) work: RECT,
+    pub(super) work: airpane_core::snapshot::Rect,
     /// 应用图标缓存，同一应用的多个窗口共用。
     pub(super) icons: IconCache,
     /// 当前正在拖拽的项（D-053）。

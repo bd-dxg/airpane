@@ -1,6 +1,7 @@
 //! 预览区布局：缩略图与信息条矩形、滚动、DPI 换算与命中测试。
 
 use airpane_core::config::effective_strip_width;
+use airpane_core::stage;
 use airpane_platform_win::monitor::primary_work_area;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{
@@ -40,7 +41,8 @@ const FALLBACK_ASPECT: f64 = 9.0 / 16.0;
 ///
 /// 安全前提：`state` 要么为空，要么指向存活的 `StripState`。
 pub(super) unsafe fn relayout_window(hwnd: HWND, state: *mut StripState) {
-    let work = work_area(); // SAFETY: 只查询本窗口所在显示器的 DPI。
+    let work = work_area();
+    // SAFETY: 只查询本窗口所在显示器的 DPI。
     let dpi = unsafe { GetDpiForWindow(hwnd) };
     let dpi = if dpi == 0 { 96 } else { dpi };
     let width_dip = if state.is_null() {
@@ -49,17 +51,19 @@ pub(super) unsafe fn relayout_window(hwnd: HWND, state: *mut StripState) {
         // SAFETY: 见函数文档，`state` 只在窗口存续期间使用。
         unsafe { (*state).width_dip }
     };
-    let width = physical_width(width_dip, dpi, work.right - work.left);
+    let width = physical_width(width_dip, dpi, work.width());
+    // 位置由 `core::stage::strip_rect` 算：贴工作区的边，任务栏在四条边任意一边都不会被盖住。
+    let strip = stage::strip_rect(work, width);
 
     // SAFETY: 只移动本程序自己的窗口，并保持置顶与不抢焦点。
     unsafe {
         let _ = SetWindowPos(
             hwnd,
             Some(HWND_TOPMOST),
-            work.left,
-            work.top,
-            width,
-            work.bottom - work.top,
+            strip.left,
+            strip.top,
+            strip.width(),
+            strip.height(),
             SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
         let _ = InvalidateRect(Some(hwnd), None, true);
@@ -276,12 +280,6 @@ pub(super) fn client_height(hwnd: HWND) -> i32 {
 }
 
 /// 主显示器工作区（扣除任务栏）。
-pub(super) fn work_area() -> RECT {
-    let area = primary_work_area();
-    RECT {
-        left: area.left,
-        top: area.top,
-        right: area.right,
-        bottom: area.bottom,
-    }
+pub(super) fn work_area() -> airpane_core::snapshot::Rect {
+    primary_work_area()
 }

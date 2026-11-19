@@ -28,6 +28,21 @@ pub fn stage_rect(work_area: Rect, strip_width_px: i32) -> Rect {
     }
 }
 
+/// 预览区应占据的矩形：贴工作区的左边与上下边（D-058）。
+///
+/// 不写死 `0,0`：工作区已经把任务栏扣掉了，所以任务栏在上下左右任意一边时，
+/// 贴着工作区的边就自动避开它（左边任务栏 → `left` 不为 0；顶部任务栏 → `top` 不为 0）。
+/// 宽度超过工作区时收到工作区宽度，避免算出超出屏幕的矩形。
+pub fn strip_rect(work_area: Rect, width_px: i32) -> Rect {
+    let width = width_px.clamp(0, work_area.width().max(0));
+    Rect {
+        left: work_area.left,
+        top: work_area.top,
+        right: work_area.left + width,
+        bottom: work_area.bottom,
+    }
+}
+
 /// 把给定尺寸居中放进舞台区（D-025：只记尺寸，位置每次重算）。
 ///
 /// 尺寸超过舞台区时收到舞台区大小；尺寸为 0 或负数时收到 1 像素。
@@ -116,5 +131,67 @@ mod tests {
         let placed = centered_rect(stage, 0, -10);
         assert_eq!(placed.width(), 1);
         assert_eq!(placed.height(), 1);
+    }
+
+    /// 四种任务栏位置下的工作区（2560×1440，任务栏厚 48 或 40）。
+    fn work_area_for_taskbar(edge: &str) -> Rect {
+        match edge {
+            "left" => Rect {
+                left: 48,
+                top: 0,
+                right: 2560,
+                bottom: 1440,
+            },
+            "top" => Rect {
+                left: 0,
+                top: 40,
+                right: 2560,
+                bottom: 1440,
+            },
+            "right" => Rect {
+                left: 0,
+                top: 0,
+                right: 2512,
+                bottom: 1440,
+            },
+            // 底部（默认）：上下都从 0 开始，下边界扣掉任务栏。
+            _ => Rect {
+                left: 0,
+                top: 0,
+                right: 2560,
+                bottom: 1400,
+            },
+        }
+    }
+
+    #[test]
+    fn strip_never_overlaps_the_taskbar_on_any_edge() {
+        for edge in ["left", "top", "right", "bottom"] {
+            let work = work_area_for_taskbar(edge);
+            let strip = strip_rect(work, 200);
+            assert_eq!(strip.left, work.left, "{edge}: 左边对齐工作区");
+            assert_eq!(strip.top, work.top, "{edge}: 上边对齐工作区");
+            assert_eq!(strip.bottom, work.bottom, "{edge}: 下边对齐工作区");
+            assert_eq!(strip.width(), 200, "{edge}: 宽度不变");
+        }
+    }
+
+    #[test]
+    fn strip_leaves_room_for_the_stage_on_every_edge() {
+        for edge in ["left", "top", "right", "bottom"] {
+            let work = work_area_for_taskbar(edge);
+            let strip = strip_rect(work, 200);
+            let stage = stage_rect(work, strip.width());
+            assert_eq!(strip.right, stage.left, "{edge}: 预览区与舞台区无缝相接");
+            assert_eq!(stage.right, work.right, "{edge}: 舞台区右边界不出工作区");
+        }
+    }
+
+    #[test]
+    fn oversized_strip_is_clamped_inside_the_work_area() {
+        let work = work_area_for_taskbar("left");
+        let strip = strip_rect(work, 5000);
+        assert_eq!(strip.left, 48);
+        assert_eq!(strip.right, work.right, "超过工作区时收到工作区宽度");
     }
 }
