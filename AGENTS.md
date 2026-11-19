@@ -35,8 +35,13 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 
 ## 提交前必须走完的流程
 
-1. `cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace` 全绿。
-2. 执行 `code-review-expert` skill 审查本次 diff。**审出来的问题必须修复并重跑第 1 步**，不允许带着未处理的 P0/P1 提交；确认不修的要在 PR 描述里写清楚原因。
+1. `cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace` 全绿；顺手确认没有新增超过 300 行的源码文件。
+2. 执行 `code-review-expert` skill 审查本次 diff。**按技能本身的流程走，不是写一句「自查通过」**：
+   - 先读 `SKILL.md` 与它的三份 checklist（`solid-checklist.md`、`code-quality-checklist.md`、`security-checklist.md`），按它们逐项比。
+   - 用 `git diff main...HEAD` 逐文件过，按 P0 / P1 / P2 / P3 分级；涉及窗口操作的改动要用真实窗口验，不能只靠编译通过。
+   - **P0/P1/P2 必须修完并重跑第 1 步**；P3 要么修，要么在 PR 里写清不修的理由。
+   - 审查结论原文（问题位置、现象、修法）与「未覆盖项」（本机没有的环境、留到后续的验证）都要写进 PR 描述。审查发现的问题单独提交时要能对应上。
+   - 确认不修的问题必须写明原因，不允许闷着不提。
 3. 执行 `gencom` skill 生成提交信息，提交带 `Signed-off-by`（`git commit -s`）。
 
 ## 代码文件大小
