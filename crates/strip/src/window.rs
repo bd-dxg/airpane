@@ -17,6 +17,7 @@ use airpane_core::config::DEFAULT_STRIP_WIDTH_DIP;
 use airpane_core::snapshot::Rect;
 use windows::Win32::Foundation::{HINSTANCE, HWND};
 use windows::Win32::Graphics::Dwm::{DwmRegisterThumbnail, DwmUnregisterThumbnail};
+use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -178,6 +179,12 @@ impl Strip {
     pub fn set_visible(&self, visible: bool) {
         // SAFETY: 只改变本程序自己窗口的可见性；`SW_SHOWNOACTIVATE` 不会抢焦点。
         unsafe {
+            if visible {
+                // 先把内容画好再显示：隐藏期间窗口表面可能被系统丢掉，直接显示会
+                // 先露一帧桌面（D-055）。
+                let _ = InvalidateRect(Some(self.hwnd), None, false);
+                let _ = UpdateWindow(self.hwnd);
+            }
             let _ = ShowWindow(self.hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
         }
     }

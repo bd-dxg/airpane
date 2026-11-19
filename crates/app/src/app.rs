@@ -97,8 +97,9 @@ impl App {
         strip.set_visible(true);
         log_info!("进入 Stage 模式（预览区宽 {} 像素）", strip.width());
         self.refresh_registry();
-        self.focus_window(foreground_window(), strip);
-        self.update_strip_visibility(strip);
+        let foreground = foreground_window();
+        self.focus_window(foreground, strip);
+        self.update_strip_visibility(strip, foreground);
         self.sync_strip(strip);
     }
 
@@ -148,15 +149,19 @@ impl App {
         }
         match event {
             WindowEvent::Foreground { hwnd } => {
-                // Win+D / 显示桌面：桌面不需要搬窗口，只更新可见性。
+                // 先调可见性再干别的：这里只查一次窗口矩形，而后面要枚举近 300 个
+                // 窗口再搬窗口。放在后面的话，全屏视频缩回时桌面会先露几帧（D-055）。
+                self.update_strip_visibility(strip, hwnd);
+                // Win+D / 显示桌面：桌面不需要搬窗口。
                 if is_desktop_window(hwnd) {
-                    self.update_strip_visibility(strip);
                     return;
                 }
                 self.refresh_registry();
                 self.focus_window(hwnd, strip);
-                // 全屏视频/游戏/F11 会把整屏盖住，此时预览区浮在上面反而遮挡画面。
-                self.update_strip_visibility(strip);
+            }
+            WindowEvent::BoundsChanged { hwnd } => {
+                // 前台窗口的矩形变了：进出全屏就靠这个事件，不等 1Hz 校准（D-055）。
+                self.update_strip_visibility(strip, hwnd);
             }
             // DESTROY 事件在进程退出时不会投递（D-020），这里只是尽力而为，
             // 1Hz 的 reconcile 才是兜底。
@@ -196,7 +201,7 @@ impl App {
             self.remember_active_size(strip.width());
         }
         // 在同一个窗口里点全屏不会产生前台事件，靠 1Hz 校准补上（D-052）。
-        self.update_strip_visibility(strip);
+        self.update_strip_visibility(strip, foreground_window());
         if let Some(active) = self.active {
             if !self.registry.contains(active) {
                 log_debug!("活跃窗口 {:#x} 已消失", active);
@@ -206,21 +211,16 @@ impl App {
         self.sync_strip(strip);
     }
 
-    /// 根据当前前台窗口决定预览区要不要隐藏（D-036、D-052）。
+    /// 根据前台窗口决定预览区要不要隐藏（D-036、D-052、D-055）。
     ///
-    /// 两种情况要藏：桌面成为前台（Win+D，否则遮住桌面图标）；当前窗口的可视边界
+    /// 两种情况要藏：桌面成为前台（Win+D，否则遮住桌面图标）；前台窗口的可视边界
     /// 盖住整个显示器（视频全屏、游戏、F11，否则置顶的预览区挡在画面上）。
     ///
-    /// 直接查前台窗口，不从事件参数或 `active` 推断：两者在桌面、全屏、UAC 等
-    /// 过渡时刻都可能对不上，而可见性是每帧都要正确的东西。
-    ///
-    /// 只在状态真正变化时调 `SetWindowVisible`，避免「先显示再隐藏」的闪一下。
-    fn update_strip_visibility(&mut self, strip: &mut Strip) {
-        let desktop = is_desktop_window(foreground_window());
-        let fullscreen = !desktop
-            && self
-                .active
-                .is_some_and(|hwnd| monitor::covers_primary_monitor(hwnd as isize));
+    /// 用传进来的前台窗口而不是 `active`：调用方在 "前台刚变、还没搬窗口" 时就想
+    /// 知道答案，那时 `active` 还是旧窗口。只在状态真正变化时调 `set_visible`。
+    fn update_strip_visibility(&mut self, strip: &mut Strip, foreground: isize) {
+        let desktop = is_desktop_window(foreground);
+        let fullscreen = !desktop && monitor::covers_primary_monitor(foreground);
         let hidden = desktop || fullscreen;
         if hidden == self.strip_hidden {
             return;
@@ -229,7 +229,7 @@ impl App {
         strip.set_visible(!hidden);
         if hidden {
             // 刚才被预览区盖住的区域要由下层窗口补画，否则会露一帧桌面（D-055）。
-            compose::redraw_now(foreground_window());
+            compose::redraw_now(foreground);
         }
         if !hidden {
             log_info!("恢复预览区");

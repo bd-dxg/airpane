@@ -405,14 +405,28 @@
 - **影响**：新增 `platform-win::theme`（`SHGetValueW` 读注册表，`windows` feature 加 `Win32_System_Registry`）；`paint` 从常量改成 `Palette`，`StripState.scheme`。
 - **已知限制**：只认「应用模式」，不跟随自定义强调色；主题切换时只重绘本窗口，已画的缩略图由 DWM 实时重新合成，不需要额外处理。
 
-## D-055 隐藏预览区后催一层重绘（未复现闪帧，属缓解）
+## D-055 隐藏预览区后催一层重绘（当时未复现，仅作缓解）
 
 - **日期**：2026-11-19
 - **决策**：隐藏预览区后对前台窗口发一次 `RedrawWindow(RDW_INVALIDATE | RDW_ALLCHILDREN)` 再 `DwmFlush()`，让被盖住的区域立刻重画。故意不用 `RDW_UPDATENOW` —— 那会同步给别的进程发 `WM_PAINT`，对方卡死时本线程跟着卡。
 - **理由**：用户反馈全屏视频隐藏预览区的一瞬能看到部分桌面。
 - **实测情况**：用一个黑色无边框全屏窗口 + 30ms 间隔截图采样（277 帧），开关这段代码各跑一遍，两遍都没采到桌面像素 —— 说明脚本化场景复现不了真实播放器的这一帧。因此这条是低风险缓解，**未证实有效**，需要在真实播放器下复验。
 - **影响**：新增 `platform-win::compose::redraw_now`；`App::update_strip_visibility` 在隐藏分支调用一次。
-- **后续**：如果真实场景仍会闪，下一步试 `SHQueryUserNotificationState` 提前隐藏（M2 的完整全屏判定），而不是继续在重绘上微调。
+
+## D-057 用 LOCATIONCHANGE 事件把全屏显隐延迟从 ~1 秒降到几十毫秒
+
+- **日期**：2026-11-19
+- **决策**：监听 `EVENT_OBJECT_LOCATIONCHANGE`，但**只把前台窗口的矩形变化投递成 `WindowEvent::BoundsChanged`**；`App::on_event` 收到后只调一次 `update_strip_visibility`，不枚举、不搬窗口。同时把前台事件里的可见性判断提到 `refresh_registry` / `focus_window` **之前**，判定参数从 `self.active` 改为传进来的前台句柄；显示前先 `InvalidateRect` + `UpdateWindow`，避免第一帧是空白。
+- **理由**：D-055 只解决了「进入全屏时下层窗口不重画」，而用户实测退出全屏仍露桌面。根因是在同一个窗口里点全屏/退全屏**不产生前台事件**，只能等 1Hz 校准；再加上前台事件里要先枚举近 300 个窗口再搬窗口，这段耗时里桌面就露出来了。
+- **实测（真实 Chrome 视频页 + 模拟按键，两种代码各跑一遍）**：
+
+| 方向 | 修复前 | 修复后 |
+| --- | --- | --- |
+| 按 F 进全屏，预览区隐藏 | 368 ms | 42 ms |
+| 按 Esc 退全屏，预览区恢复 | 982 ms | 26 ms |
+
+- **影响**：`events::WindowEvent::BoundsChanged`、`events::is_foreground`；LOCATIONCHANGE hook 区间；`App::update_strip_visibility(strip, foreground)`；`Strip::set_visible` 先画后显。
+- **已知限制**：只转发前台窗口的事件，后台窗口拖拽不会触发可见性判断；拖拖前台窗口时如果它恰好盖满屏幕，预览区会隐藏（语义上正确）；若某应用进出全屏根本不改窗口矩形，仍靠 1Hz 兑底，最多晚一秒。
 
 ## D-056 输入法使用期间某些窗口的缩略图会变黑（DWM 限制）
 
