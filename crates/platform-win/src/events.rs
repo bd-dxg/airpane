@@ -14,9 +14,10 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
-    EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND,
-    EVENT_SYSTEM_MINIMIZESTART, GetMessageW, MSG, OBJID_WINDOW, PostThreadMessageW,
-    TranslateMessage, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_QUIT,
+    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SHOW,
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART,
+    GetForegroundWindow, GetMessageW, MSG, OBJID_WINDOW, PostThreadMessageW, TranslateMessage,
+    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_QUIT,
 };
 
 /// 监听线程收到的窗口事件。`hwnd` 是原始句柄值，跨进程重启后失效。
@@ -45,6 +46,12 @@ pub enum WindowEvent {
         hwnd: isize,
     },
     Restored {
+        hwnd: isize,
+    },
+    /// 前台窗口的矩形变了（移动、缩放、进出全屏）。
+    ///
+    /// 只在前台窗口上发，否则拖一个普通窗口会源源不断地吵主线程（D-055）。
+    BoundsChanged {
         hwnd: isize,
     },
 }
@@ -179,6 +186,7 @@ unsafe fn install_hooks() -> Vec<HWINEVENTHOOK> {
     let ranges = [
         (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND),
         (EVENT_OBJECT_CREATE, EVENT_OBJECT_NAMECHANGE),
+        (EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE),
     ];
 
     let mut hooks = Vec::new();
@@ -225,9 +233,18 @@ fn map_event(event: u32, hwnd: isize) -> Option<WindowEvent> {
         EVENT_OBJECT_SHOW => WindowEvent::Shown { hwnd },
         EVENT_OBJECT_HIDE => WindowEvent::Hidden { hwnd },
         EVENT_OBJECT_NAMECHANGE => WindowEvent::TitleChanged { hwnd },
+        // 进出全屏靠这个事件：同一个窗口里改尺寸不会产生前台事件，等 1Hz 校准
+        // 就晚了半秒，视频缩回去时桌面会先露出来（D-055）。
+        EVENT_OBJECT_LOCATIONCHANGE if is_foreground(hwnd) => WindowEvent::BoundsChanged { hwnd },
         _ => return None,
     };
     Some(window_event)
+}
+
+/// 句柄是否就是当前前台窗口。
+fn is_foreground(hwnd: isize) -> bool {
+    // SAFETY: 只读查询，对任意句柄安全。
+    unsafe { GetForegroundWindow() == HWND(hwnd as *mut core::ffi::c_void) }
 }
 
 fn emit(event: WindowEvent) {

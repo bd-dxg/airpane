@@ -49,6 +49,8 @@ fn apply(registry: &mut WindowRegistry, event: WindowEvent) {
             registry.remove(hwnd as i64);
         }
         WindowEvent::Minimized { .. } | WindowEvent::Restored { .. } => {}
+        // 前台窗口改尺寸（含进出全屏），不改变窗口集合。
+        WindowEvent::BoundsChanged { .. } => {}
     }
 }
 
