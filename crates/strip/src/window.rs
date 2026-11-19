@@ -3,6 +3,7 @@
 //! 布局（`layout`）、绘制（`paint`）、消息处理（`wndproc`）与运行时状态（`state`）
 //! 各占一个子模块，单文件控制在 300 行以内（AGENTS.md）。
 
+mod app_loop;
 mod layout;
 mod paint;
 mod state;
@@ -31,7 +32,7 @@ use layout::{apply_layout, client_width, physical_width, relayout_window, work_a
 use state::{Entry, IconCache, StripState};
 use wndproc::wnd_proc;
 
-pub use wndproc::{enable_per_monitor_v2, run_message_loop};
+pub use app_loop::{enable_per_monitor_v2, run_message_loop};
 
 /// 预览区默认的逻辑宽度（DIP），PRD 4.5。实际生效值由 [`physical_width`] 计算。
 pub const DEFAULT_WIDTH_DIP: u32 = DEFAULT_STRIP_WIDTH_DIP;
@@ -122,7 +123,8 @@ impl Strip {
         }
 
         let work = work_area();
-        let initial_width = physical_width(width_dip, 96, work.right - work.left);
+        let initial_width = physical_width(width_dip, 96, work.width());
+        let initial = airpane_core::stage::strip_rect(work, initial_width);
         // SAFETY: 创建本程序自己的窗口，父窗口与菜单为空。
         let hwnd = unsafe {
             CreateWindowExW(
@@ -130,10 +132,10 @@ impl Strip {
                 CLASS_NAME,
                 &HSTRING::from("AirPane"),
                 WS_POPUP | WS_VISIBLE,
-                work.left,
-                work.top,
-                initial_width,
-                work.bottom - work.top,
+                initial.left,
+                initial.top,
+                initial.width(),
+                initial.height(),
                 None,
                 None,
                 Some(HINSTANCE(instance.0)),
@@ -151,6 +153,12 @@ impl Strip {
             hovered: None,
             tracking_leave: false,
             scheme: airpane_platform_win::theme::system_color_scheme(),
+            work: airpane_core::snapshot::Rect {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
             drag: None,
             icons: IconCache::default(),
             entries: Vec::new(),

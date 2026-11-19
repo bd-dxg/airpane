@@ -2,16 +2,13 @@
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
-use windows::Win32::UI::HiDpi::{
-    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
-};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, MSG,
-    PostQuitMessage, TranslateMessage, WM_CAPTURECHANGED, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETTINGCHANGE,
+    DefWindowProcW, GWLP_USERDATA, GetWindowLongPtrW, PostQuitMessage, WM_CAPTURECHANGED,
+    WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_PAINT, WM_SETTINGCHANGE,
 };
 
 use airpane_platform_win::events;
@@ -27,27 +24,6 @@ use super::state::{Drag, StripState};
 
 /// `WM_MOUSELEAVE` 在绑定里属于 `Win32_UI_Controls`，为一个常量不值得加 feature。
 const WM_MOUSELEAVE: u32 = 0x02A3;
-
-/// 打开 Per-Monitor V2 DPI 感知。进程内只需调用一次，重复调用会失败并被忽略。
-pub fn enable_per_monitor_v2() {
-    // SAFETY: 进程级设置，无参数指针；失败通常表示已经设置过。
-    unsafe {
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    }
-}
-
-/// 在预览区线程上运行消息循环，直到窗口销毁。
-pub fn run_message_loop() {
-    let mut msg = MSG::default();
-    // SAFETY: `msg` 是本栈帧上的 MSG。
-    while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
-        // SAFETY: 消息由 GetMessageW 填充。
-        unsafe {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-}
 
 /// 预览区窗口的消息处理。
 ///
@@ -272,15 +248,28 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_SETTINGCHANGE => {
-            // 系统切浅色/深色时刷新配色（D-054）。读一次注册表很便宜，不做字符串匹配。
             if !state.is_null() {
                 // SAFETY: 状态指针由本进程维护。
+                let state = unsafe { &mut *state };
+                let mut redraw = false;
+                // 系统切浅色/深色时刷新配色（D-054）。读一次注册表很便宜，不做字符串匹配。
                 let scheme = airpane_platform_win::theme::system_color_scheme();
-                let changed = unsafe { (*state).scheme != scheme };
-                if changed {
-                    // SAFETY: 同上。
+                if state.scheme != scheme {
+                    state.scheme = scheme;
+                    redraw = true;
+                }
+                // 任务栏换边/自动隐藏、分辨率变化都会改工作区（D-058）。
+                // 只有真的变了才重排，避免每次设置广播都动一次窗口。
+                if state.work != super::layout::work_area() {
+                    // SAFETY: 状态指针由本进程维护；重排内部会重绘。
                     unsafe {
-                        (*state).scheme = scheme;
+                        relayout_window(hwnd, state as *mut StripState);
+                    }
+                    redraw = false;
+                }
+                if redraw {
+                    // SAFETY: 只重画本程序自己的窗口。
+                    unsafe {
                         let _ = InvalidateRect(Some(hwnd), None, true);
                     }
                 }

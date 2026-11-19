@@ -17,14 +17,15 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use airpane_core::registry::WindowRegistry;
-use airpane_core::snapshot::WindowSnapshot;
+use airpane_core::snapshot::{Rect, WindowSnapshot};
 use airpane_core::stage::Mode;
 use airpane_core::strip_order::StripOrderFile;
 use airpane_core::window_sizes::{WindowSizeStore, WindowSizesFile};
 use airpane_platform_win::events::WindowEvent;
 use airpane_platform_win::foreground::foreground_window;
 use airpane_platform_win::monitor;
-use airpane_platform_win::window::is_desktop_window;
+use airpane_platform_win::placement::move_window;
+use airpane_platform_win::window::{inspect_window, is_desktop_window};
 use airpane_platform_win::{compose, log_debug, log_info};
 use airpane_strip::window::{Strip, StripAction, StripItem};
 
@@ -48,6 +49,8 @@ pub struct App {
     strip_hidden: bool,
     /// 新搬入窗口的观察期截止时间。应用启动时会自己改尺寸，这段时间内持续纠正。
     settle_until: Option<Instant>,
+    /// 上次已知的工作区。任务栏换边、分辨率变化都会改它（D-058）。
+    work_area: Rect,
     snapshot_path: PathBuf,
     sizes_path: PathBuf,
     order_path: PathBuf,
@@ -74,6 +77,7 @@ impl App {
             tick: 0,
             strip_hidden: false,
             settle_until: None,
+            work_area: monitor::primary_work_area(),
             snapshot_path: paths.snapshot,
             sizes_path: paths.sizes,
             order_path: paths.order,
@@ -196,6 +200,8 @@ impl App {
         }
         self.enforce_active_bounds(strip);
         self.enforce_settle(strip);
+        // 任务栏换边/自动隐藏、分辨率变化都会改工作区，靠每拍对比发现（D-058）。
+        self.sync_work_area(strip);
         // 观察期内不记录尺寸：那时窗口的尺寸是应用自己初始化出来的，不是用户偏好。
         if self.settle_until.is_none() {
             self.remember_active_size(strip.width());
@@ -209,6 +215,43 @@ impl App {
             }
         }
         self.sync_strip(strip);
+    }
+
+    /// 工作区变了就把预览区与舞台区重新摆一次（D-058）。
+    ///
+    /// 任务栏从底部换到左侧时，工作区的左边界会从 0 变成任务栏宽度；不重新摆的话
+    /// 预览区会继续压着任务栏。只在真的变了时才动，平时每拍只多一次查寻。
+    fn sync_work_area(&mut self, strip: &mut Strip) {
+        let work_area = monitor::primary_work_area();
+        if work_area == self.work_area {
+            return;
+        }
+        self.work_area = work_area;
+        log_info!(
+            "工作区变化（{}x{} @({},{})），重摆预览区与舞台区",
+            work_area.width(),
+            work_area.height(),
+            work_area.left,
+            work_area.top
+        );
+        strip.relayout();
+
+        // 全屏的窗口不能动，否则会把它的全屏状态破坏掉。
+        let Some(active) = self.active else {
+            return;
+        };
+        if monitor::covers_primary_monitor(active as isize) {
+            return;
+        }
+        let Some(info) = inspect_window(active as isize) else {
+            return;
+        };
+        let target = self.target_rect(&info, strip.width(), false);
+        if move_window(active as isize, target).is_ok() {
+            log_debug!("已把 {} 重新摆进新的舞台区", info.process_name);
+            self.last_items.clear();
+            self.sync_strip(strip);
+        }
     }
 
     /// 根据前台窗口决定预览区要不要隐藏（D-036、D-052、D-055）。

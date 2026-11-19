@@ -98,6 +98,7 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 - `SHGetFileInfoW` 同时被 `Win32_UI_Shell` 与 `Win32_Storage_FileSystem` 两个 feature 门控，只开前者编不过；`TrackMouseEvent` 与 `TME_LEAVE` 在 `UI::Input::KeyboardAndMouse`，而 `WM_MOUSELEAVE` 只在 `UI::Controls`（为一个常量不值得加 feature，手动定义 0x02A3）。
 - **DWM 缩略图在某些窗口上会整块变黑**：`winc.exe` 使用输入法时预览区那一格会变黑，输入结束自行恢复。这是 DWM 在窗口表面切换期间的采样限制，M1 不处理（不做像素检测、不做占位降级），已记入 D-056。
 - **进/退全屏不产生前台事件**：在同一个窗口里切全屏只改矩形，`EVENT_SYSTEM_FOREGROUND` 不会发。靠 1Hz 校准会晚半到一秒（实测退出全屏时桌面露 982ms），必须监听 `EVENT_OBJECT_LOCATIONCHANGE`，并且只把**前台窗口**的变化转发给主线程，否则拖拽窗口时会大量刷事件（D-057）。
+- **工作区（`SPI_GETWORKAREA`）会变**：任务栏换边/自动隐藏、分辨率变化都会改它，不能只在启动时读一次。预览区靠 `WM_SETTINGCHANGE` 重排，`App` 靠 1Hz 比对兑底（D-058）。
 - **读系统深浅色不要用 `ShouldAppsUseDarkMode`**（uxtheme 的无文档导出）：用 `SHGetValueW` 读 `HKCU\...\Themes\Personalize\AppsUseLightTheme`，需要 `Win32_System_Registry` feature 拿 `HKEY_CURRENT_USER`。
 
 ### 环境限制
