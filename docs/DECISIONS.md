@@ -428,6 +428,14 @@
 - **影响**：`events::WindowEvent::BoundsChanged`、`events::is_foreground`；LOCATIONCHANGE hook 区间；`App::update_strip_visibility(strip, foreground)`；`Strip::set_visible` 先画后显。
 - **已知限制**：只转发前台窗口的事件，后台窗口拖拽不会触发可见性判断；拖拖前台窗口时如果它恰好盖满屏幕，预览区会隐藏（语义上正确）；若某应用进出全屏根本不改窗口矩形，仍靠 1Hz 兑底，最多晚一秒。
 
+## D-058 工作区变化时重排预览区与舞台区
+
+- **日期**：2026-11-19
+- **决策**：预览区增加 `WM_SETTINGCHANGE` 处理：工作区变了就 `relayout_window`（先比对缓存的 `StripState.work`，没变不动作）；`App` 新增 `work_area` 快照，1Hz 校准里比对 `monitor::primary_work_area()`，变了就重排预览区并把活跃窗口重新摆进新的舞台区（全屏窗口不动）。
+- **理由**：用户把任务栏从底部换到左侧后，预览区仍钉在 `x=0` 被任务栏遮住。实测数据：工作区已是 `48,0,2560,1440`，任务栏占 `0,0,48,1440`，而预览区窗口还是 `0,0,200,1440` —— 因为工作区只在 `Strip::create` 里读过一次。
+- **影响**：`StripState.work`；`wndproc` 的 `WM_SETTINGCHANGE` 分支；`App::sync_work_area`、`App::work_area`。
+- **实测**：任务栏在左侧时启动，预览区落在 `48,0,248,1440`，不再遮挡任务栏；活跃窗口同步落在 `248,...`（`GetWindowRect` 为 `241`，含阴影补偿）。运行中的工作区变化无法在不改系统设置的前提下模拟，只能靠代码路径与 1Hz 比对保证，需要真实拖动任务栏复验。
+
 ## D-056 输入法使用期间某些窗口的缩略图会变黑（DWM 限制）
 
 - **日期**：2026-11-19

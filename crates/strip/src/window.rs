@@ -3,6 +3,7 @@
 //! 布局（`layout`）、绘制（`paint`）、消息处理（`wndproc`）与运行时状态（`state`）
 //! 各占一个子模块，单文件控制在 300 行以内（AGENTS.md）。
 
+mod app_loop;
 mod layout;
 mod paint;
 mod state;
@@ -15,7 +16,7 @@ use std::sync::mpsc::Sender;
 
 use airpane_core::config::DEFAULT_STRIP_WIDTH_DIP;
 use airpane_core::snapshot::Rect;
-use windows::Win32::Foundation::{HINSTANCE, HWND};
+use windows::Win32::Foundation::{HINSTANCE, HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmRegisterThumbnail, DwmUnregisterThumbnail};
 use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -31,7 +32,7 @@ use layout::{apply_layout, client_width, physical_width, relayout_window, work_a
 use state::{Entry, IconCache, StripState};
 use wndproc::wnd_proc;
 
-pub use wndproc::{enable_per_monitor_v2, run_message_loop};
+pub use app_loop::{enable_per_monitor_v2, run_message_loop};
 
 /// 预览区默认的逻辑宽度（DIP），PRD 4.5。实际生效值由 [`physical_width`] 计算。
 pub const DEFAULT_WIDTH_DIP: u32 = DEFAULT_STRIP_WIDTH_DIP;
@@ -151,6 +152,7 @@ impl Strip {
             hovered: None,
             tracking_leave: false,
             scheme: airpane_platform_win::theme::system_color_scheme(),
+            work: RECT::default(),
             drag: None,
             icons: IconCache::default(),
             entries: Vec::new(),

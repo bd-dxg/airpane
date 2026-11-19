@@ -40,8 +40,7 @@ const FALLBACK_ASPECT: f64 = 9.0 / 16.0;
 ///
 /// 安全前提：`state` 要么为空，要么指向存活的 `StripState`。
 pub(super) unsafe fn relayout_window(hwnd: HWND, state: *mut StripState) {
-    let work = work_area();
-    // SAFETY: 只查询本窗口所在显示器的 DPI。
+    let work = work_area(); // SAFETY: 只查询本窗口所在显示器的 DPI。
     let dpi = unsafe { GetDpiForWindow(hwnd) };
     let dpi = if dpi == 0 { 96 } else { dpi };
     let width_dip = if state.is_null() {
@@ -72,6 +71,7 @@ pub(super) unsafe fn relayout_window(hwnd: HWND, state: *mut StripState) {
     // SAFETY: 见函数文档。
     unsafe {
         (*state).dpi = dpi;
+        (*state).work = work;
         apply_layout(hwnd, state);
     }
 }
