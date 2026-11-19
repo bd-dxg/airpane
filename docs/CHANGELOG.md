@@ -58,6 +58,7 @@
 
 - 单个源码文件不超过 300 行：`strip::window`、`app`、`platform_win::window` 各自按职责拆成子模块，行为与公开接口不变
 - AGENTS.md 补充提交前流程：必须跑 `code-review-expert` 并修完审出的问题，再执行 `gencom` 生成提交信息
+- AGENTS.md 补充 `code-review-expert` 执行细则：读 skill 与三份 checklist、按 P0–P3 分级、P0/P1/P2 必须修、审查结论与未覆盖项写进 PR 描述
 
 ### 新增（M0 技术原型）
 
