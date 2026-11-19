@@ -18,7 +18,7 @@ cargo build --workspace                                   # 构建
 cargo test --workspace                                    # 单元测试
 cargo clippy --workspace --all-targets -- -D warnings     # 静态检查（CI 门禁）
 cargo fmt --all --check                                   # 格式检查（CI 门禁）
-cargo run --bin airpane                                   # 主程序（当前只打印版本）
+cargo run --bin airpane                                   # 主程序（直接进 Stage 模式）
 ```
 
 诊断与验收用的示例程序（都需要在真实桌面下跑，CI 不覆盖）：
@@ -60,7 +60,7 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 | `crates/app` | 主程序：配置与日志、消息循环、Stage 控制器；`app/` 下按搬窗口、快照与尺寸、观察期、注册表拆分 |
 | `assets/` | 应用图标：`airpane.ico` 与 `airpane.rc`，由 `crates/app/build.rs` 用 `rc.exe` 编进 exe |
 | `prototypes/anim` | M0 的一次性动画原型，验证完废弃，M1 不继承 |
-| `docs/` | `PRD.md`（冻结的草案基线）、`DECISIONS.md`（冲突时以此为准）、`DEPENDENCIES.md`、`CHANGELOG.md`、M0 的两份报告 |
+| `docs/` | `PRD.md`（冻结的草案基线）、`DECISIONS.md`（冲突时以此为准）、`DEPENDENCIES.md`、`CHANGELOG.md`、`test-report-M1.md`、M0 的两份报告 |
 
 ## 代码约定
 
@@ -108,8 +108,10 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 ## 当前状态
 
 - M0（T0.1–T0.6）已全部完成并合并。
-- M1（T1.1–T1.8）功能已全部合并，并完成六轮试用反馈修复（行为修复 D-036 ~ D-042、预览区 UI D-044 ~ D-046、固定排序与大图标条 D-047 ~ D-049、应用图标 D-050、当前窗口入列 D-051、全屏隐藏 D-052、拖动排序 D-053）；待办是 3 天日常使用验收。
+- M1（T1.1–T1.8）功能已全部合并，并完成九轮试用反馈修复（行为修复 D-036 ~ D-042、预览区 UI D-044 ~ D-046、固定排序与大图标条 D-047 ~ D-049、应用图标 D-050、当前窗口入列 D-051、全屏隐藏 D-052、拖动排序 D-053、主题与闪帧 D-054 ~ D-057、工作区变化 D-058）；待办是 3 天日常使用验收。
+- 预览区：全部窗口 + 固定/手动顺序 + 40 DIP 图标条 + 跟随系统主题；任务栏在上下左右任意一边都不会被遮住（D-058）。
 - release 构建不申请控制台窗口，启动信息看 `%APPDATA%\AirPane\logs\airpane.log`；debug 构建保留控制台。
 - 主程序默认进入 Stage 模式，`Ctrl+Alt+S` 或预览区底部的「桌面」按钮切换模式；切回普通桌面时全部窗口还原。
 - M1 范围与验收结果见 `docs/test-report-M1.md`；已知缺口见其第 4 节。
-- 开工前建议先读 `docs/DECISIONS.md`，它是与 PRD 冲突时的唯一真相源；写窗口相关代码前必读 D-030（位置尺寸统一用 DWM 可见边界）、D-022（只移动活跃窗口）、D-034（最小化窗口先同步还原）、D-039/D-040（尺寸记忆与最大化/启动的交互）。
+- 应用图标是 `assets/airpane.ico`，由 `crates/app/build.rs` 调 Windows SDK 的 `rc.exe` 编进 exe；构建机没装 Windows SDK 会直接报错。
+- 开工前建议先读 `docs/DECISIONS.md`，它是与 PRD 冲突时的唯一真相源；写窗口相关代码前必读 D-030（位置尺寸统一用 DWM 可见边界）、D-022（只移动活跃窗口）、D-034（最小化窗口先同步还原）、D-039/D-040（尺寸记忆与最大化/启动的交互）、D-058（位置一律从工作区推导，不写死坐标）。
