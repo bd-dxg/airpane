@@ -11,7 +11,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, MSG,
     PostQuitMessage, TranslateMessage, WM_CAPTURECHANGED, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETTINGCHANGE,
 };
 
 use airpane_platform_win::events;
@@ -269,6 +269,22 @@ pub(super) unsafe extern "system" fn wnd_proc(
         WM_DESTROY => {
             // SAFETY: 标准退出流程。
             unsafe { PostQuitMessage(0) };
+            LRESULT(0)
+        }
+        WM_SETTINGCHANGE => {
+            // 系统切浅色/深色时刷新配色（D-054）。读一次注册表很便宜，不做字符串匹配。
+            if !state.is_null() {
+                // SAFETY: 状态指针由本进程维护。
+                let scheme = airpane_platform_win::theme::system_color_scheme();
+                let changed = unsafe { (*state).scheme != scheme };
+                if changed {
+                    // SAFETY: 同上。
+                    unsafe {
+                        (*state).scheme = scheme;
+                        let _ = InvalidateRect(Some(hwnd), None, true);
+                    }
+                }
+            }
             LRESULT(0)
         }
         _ => {

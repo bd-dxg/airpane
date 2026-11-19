@@ -96,6 +96,8 @@ cargo run -p airpane-anim-prototype -- 300 [--no-flush]                  # 动�
 - **测之前清干净旧实例**：两个 AirPane 会互抢窗口与 `Ctrl+Alt+S`。已有单实例检测（D-042）会弹提示并退出，但仍建议先 `Get-Process airpane | Stop-Process`。
 - `windows` 0.62 里 `BOOL` 在 `windows::core::BOOL`；`HTHUMBNAIL` 在绑定中是 `isize`；`EVENT_*` 常量在 `WindowsAndMessaging`，而 `SetWinEventHook` 在 `UI::Accessibility`；`LoadCursorW` 的 `IDC_ARROW` 也在 `WindowsAndMessaging`；`GET_WHEEL_DELTA_WPARAM` 宏没有绑定，需手动从 `wparam` 高 16 位取。
 - `SHGetFileInfoW` 同时被 `Win32_UI_Shell` 与 `Win32_Storage_FileSystem` 两个 feature 门控，只开前者编不过；`TrackMouseEvent` 与 `TME_LEAVE` 在 `UI::Input::KeyboardAndMouse`，而 `WM_MOUSELEAVE` 只在 `UI::Controls`（为一个常量不值得加 feature，手动定义 0x02A3）。
+- **DWM 缩略图在某些窗口上会整块变黑**：`winc.exe` 使用输入法时预览区那一格会变黑，输入结束自行恢复。这是 DWM 在窗口表面切换期间的采样限制，M1 不处理（不做像素检测、不做占位降级），已记入 D-056。
+- **读系统深浅色不要用 `ShouldAppsUseDarkMode`**（uxtheme 的无文档导出）：用 `SHGetValueW` 读 `HKCU\...\Themes\Personalize\AppsUseLightTheme`，需要 `Win32_System_Registry` feature 拿 `HKEY_CURRENT_USER`。
 
 ### 环境限制
 

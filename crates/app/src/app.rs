@@ -25,7 +25,7 @@ use airpane_platform_win::events::WindowEvent;
 use airpane_platform_win::foreground::foreground_window;
 use airpane_platform_win::monitor;
 use airpane_platform_win::window::is_desktop_window;
-use airpane_platform_win::{log_debug, log_info};
+use airpane_platform_win::{compose, log_debug, log_info};
 use airpane_strip::window::{Strip, StripAction, StripItem};
 
 /// Stage 模式的运行时状态。
@@ -227,6 +227,10 @@ impl App {
         }
         self.strip_hidden = hidden;
         strip.set_visible(!hidden);
+        if hidden {
+            // 刚才被预览区盖住的区域要由下层窗口补画，否则会露一帧桌面（D-055）。
+            compose::redraw_now(foreground_window());
+        }
         if !hidden {
             log_info!("恢复预览区");
         } else if desktop {
